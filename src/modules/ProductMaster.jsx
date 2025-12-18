@@ -218,20 +218,38 @@ export default function ProductMaster() {
                     <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
                       <table className="w-full text-sm">
                         <thead className="bg-slate-50 text-xs text-slate-500 font-semibold border-b border-slate-100">
-                          <tr><th className="px-4 py-3 text-left">Variant</th><th className="px-4 py-3 text-left">Pack</th><th className="px-4 py-3 text-left">Code</th><th className="px-4 py-3 text-right">Actions</th></tr>
+                          <tr><th className="px-4 py-3 text-left">Variant</th><th className="px-4 py-3 text-left">Pack</th><th className="px-4 py-3 text-left">Code</th><th className="px-4 py-3 text-left">Latest Cost</th><th className="px-4 py-3 text-right">Actions</th></tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {pSkus.map(s => (
-                            <tr key={s.id} className="hover:bg-slate-50">
-                              <td className="px-4 py-3 font-medium text-slate-700">{s.variant} {s.flavour && <span className="block text-xs text-slate-400 font-normal">{s.flavour}</span>}</td>
-                              <td className="px-4 py-3 text-slate-600">{s.packSize}{s.unit} ({s.packType})</td>
-                              <td className="px-4 py-3 font-mono text-xs text-slate-500">{s.name}</td>
-                              <td className="px-4 py-3 text-right flex justify-end gap-2">
-                                <button onClick={() => { setFormData(s); setModalType('sku'); setIsModalOpen(true); }} className="p-1 hover:bg-blue-50 rounded text-blue-500"><Edit className="w-3 h-3"/></button>
-                                <button onClick={() => crud.del('skus', s.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-3 h-3"/></button>
-                              </td>
-                            </tr>
-                          ))}
+                       <tbody className="divide-y divide-slate-100">
+                          {pSkus.map(s => {
+                            // Logic to find latest purchase quote
+                            const latestBuy = quotesReceived
+                              .filter(q => q.skuId === s.id)
+                              .sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0))[0];
+                            const vendorName = latestBuy ? vendors.find(v => v.id === latestBuy.vendorId)?.companyName : '';
+
+                            return (
+                              <tr key={s.id} className="hover:bg-slate-50">
+                                <td className="px-4 py-3 font-medium text-slate-700">{s.variant} {s.flavour && <span className="block text-xs text-slate-400 font-normal">{s.flavour}</span>}</td>
+                                <td className="px-4 py-3 text-slate-600">{s.packSize}{s.unit} ({s.packType})</td>
+                                <td className="px-4 py-3 font-mono text-xs text-slate-500">{s.name}</td>
+                                <td className="px-4 py-3">
+                                  {latestBuy ? (
+                                    <div>
+                                      <div className="font-medium text-slate-700">₹{latestBuy.price}</div>
+                                      <div className="text-[10px] text-slate-400">via {vendorName}</div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 italic">No quotes</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-right flex justify-end gap-2">
+                                  <button onClick={() => { setFormData(s); setModalType('sku'); setIsModalOpen(true); }} className="p-1 hover:bg-blue-50 rounded text-blue-500"><Edit className="w-3 h-3"/></button>
+                                  <button onClick={() => crud.del('skus', s.id)} className="p-1 hover:bg-red-50 rounded text-red-500"><Trash2 className="w-3 h-3"/></button>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
