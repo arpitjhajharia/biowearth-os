@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { Card, Button, Badge } from "../components/UI";
 import { 
   X, Edit, Phone, Mail, Linkedin, ExternalLink, Link, Plus, 
-  Trash2, Box, CheckSquare, Package, Calendar, User, FileText 
+  Trash2, Box, CheckSquare, Package, Calendar, FileText 
 } from "lucide-react";
 
 // Helper: Date Format (12-Dec)
@@ -243,7 +243,8 @@ const OrderModal = ({ isOpen, onClose, companyId, orderToEdit }) => {
     </div>
   );
 };
-// --- NEW COMPONENT: Quote Modal (Sales/Purchase) ---
+
+// --- COMPONENT: Quote Modal (Sales/Purchase) ---
 const QuoteModal = ({ isOpen, onClose, initialData, vendors, clients, skus, quotesReceived }) => {
   if (!isOpen) return null;
   const [form, setForm] = useState(initialData || {});
@@ -256,7 +257,6 @@ const QuoteModal = ({ isOpen, onClose, initialData, vendors, clients, skus, quot
     onClose();
   };
 
-  // Filter Purchase Quotes for Base Cost Selection (Logic from QuotesModule)
   const availableBaseCosts = useMemo(() => {
     if (isSales && form.skuId) return quotesReceived.filter(q => q.skuId === form.skuId);
     return [];
@@ -315,6 +315,7 @@ const QuoteModal = ({ isOpen, onClose, initialData, vendors, clients, skus, quot
     </div>
   );
 };
+
 // --- MAIN DETAIL PANEL ---
 export default function DetailPanel({ type, data, onClose }) {
   if (!data) return null;
@@ -323,19 +324,18 @@ export default function DetailPanel({ type, data, onClose }) {
   
   const [contacts, setContacts] = useState([]);
   const [orders, setOrders] = useState([]);
- const [tasks, setTasks] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [quotes, setQuotes] = useState([]);
-  const [baseQuotes, setBaseQuotes] = useState([]); 
+  const [baseQuotes, setBaseQuotes] = useState([]);
   const [skus, setSkus] = useState([]);
   const [products, setProducts] = useState([]);
-  const [vendors, setVendors] = useState([]); // <--- Added
-  const [clients, setClients] = useState([]); // <--- Added
-  
-  const [quoteModal, setQuoteModal] = useState({ open: false, data: null }); // <--- Added Modal State
+  const [vendors, setVendors] = useState([]);
+  const [clients, setClients] = useState([]);
   
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [contactModal, setContactModal] = useState({ open: false, data: null });
+  const [quoteModal, setQuoteModal] = useState({ open: false, data: null });
   const [editOrder, setEditOrder] = useState(null);
 
   useEffect(() => {
@@ -351,24 +351,21 @@ export default function DetailPanel({ type, data, onClose }) {
       onSnapshot(collection(db, path, 'quotesReceived'), s => setBaseQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'skus'), s => setSkus(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'products'), s => setProducts(s.docs.map(d=>({id:d.id, ...d.data()})))),
-      // --- NEW LINES ADDED BELOW ---
       onSnapshot(collection(db, path, 'vendors'), s => setVendors(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'clients'), s => setClients(s.docs.map(d=>({id:d.id, ...d.data()})))),
     ];
     return () => unsubs.forEach(u => u());
   }, [data.id, isVendor]);
-// Group Quotes by SKU for cleaner display
-  const quoteGroups = useMemo(() => {
-    const groups = {};
-    quotes.forEach(q => {
-      if (!groups[q.skuId]) groups[q.skuId] = [];
-      groups[q.skuId].push(q);
-    });
-    // Sort quotes in each group by date (newest first)
-    Object.keys(groups).forEach(k => groups[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)));
-    return Object.keys(groups).map(skuId => ({ skuId, quotes: groups[skuId] }));
-  }, [quotes]);
+
   const addTask = () => setIsTaskModalOpen(true);
+
+  // Missing function restored
+  const togglePaymentStatus = async (order, idx) => {
+      const newTerms = order.paymentTerms.map((term, i) => 
+          i === idx ? { ...term, status: term.status === 'Paid' ? 'Pending' : 'Paid' } : term
+      );
+      await updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', order.id), { paymentTerms: newTerms });
+  };
 
   const updateOrderDoc = async (order, docName, field, value) => {
       const currentDoc = order.docRequirements?.[docName] || {};
@@ -383,6 +380,17 @@ export default function DetailPanel({ type, data, onClose }) {
   }, 0);
   
   const totalOrderValue = orders.reduce((acc, o) => acc + (parseFloat(o.amount)||0), 0);
+
+  // Group Quotes
+  const quoteGroups = useMemo(() => {
+    const groups = {};
+    quotes.forEach(q => {
+      if (!groups[q.skuId]) groups[q.skuId] = [];
+      groups[q.skuId].push(q);
+    });
+    Object.keys(groups).forEach(k => groups[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)));
+    return Object.keys(groups).map(skuId => ({ skuId, quotes: groups[skuId] }));
+  }, [quotes]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -414,13 +422,11 @@ export default function DetailPanel({ type, data, onClose }) {
            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
               <div className="space-y-6">
-                 {/* ACTIONS / TASKS CARD */}
                  <Card className="p-4 max-h-[400px] flex flex-col">
                     <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-700 text-sm uppercase flex gap-2"><CheckSquare className="w-4 h-4"/> Tasks</h3><button onClick={addTask} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold hover:bg-blue-100">+ Add</button></div>
                     <div className="flex-1 overflow-y-auto scroller pr-2">{tasks.map(t => <InlineTask key={t.id} task={t} users={usersList} />)}</div>
                  </Card>
 
-                 {/* KEY PEOPLE CARD (Clean Layout) */}
                  <Card className="p-4">
                     <div className="flex justify-between items-center mb-4">
                       <h3 className="font-bold text-slate-700 text-sm uppercase flex gap-2"><Phone className="w-4 h-4 text-slate-400"/> Key People</h3>
@@ -448,8 +454,7 @@ export default function DetailPanel({ type, data, onClose }) {
               </div>
 
               <div className="lg:col-span-2 space-y-6">
-
-                 {/* ORDERS SECTION */}
+                 {/* ORDER HISTORY */}
                  <Card className="p-5 border-blue-100 bg-blue-50/30">
                     <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-800 text-lg flex gap-2"><Box className="w-5 h-5 text-blue-600"/> Order History</h3><Button size="sm" onClick={() => { setEditOrder(null); setIsOrderModalOpen(true); }}>+ New Order</Button></div>
                     <div className="space-y-4">
