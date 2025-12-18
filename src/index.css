@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Custom Scrollbar */
+  .scroller::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scroller::-webkit-scrollbar-track { background: transparent; }
+  .scroller::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .scroller::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+  /* Animations */
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .animate-fade-in { animation: fadeIn 0.2s ease-out; }
+  
+  @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  .animate-slide-in { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  /* Table Styles */
+  .data-table { border-collapse: separate; border-spacing: 0; width: 100%; }
+  .data-table th { 
+    /* FIX IS HERE: Changed to bg-slate-50/90 */
+    @apply px-4 py-3 text-left text-[11px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50/90 border-b border-slate-200 sticky top-0 z-10 backdrop-blur-sm;
+  }
+  .data-table td { 
+    @apply px-4 py-3 text-sm text-slate-600 border-b border-slate-100 align-middle transition-colors duration-150; 
+  }
+  .data-table tr:hover td { @apply bg-blue-50/30; }
+  .data-table tr:last-child td { border-bottom: none; }
+}
