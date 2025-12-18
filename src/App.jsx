@@ -78,6 +78,19 @@ function App() {
         {activeTab === 'tasks' && <TaskBoard />}
         {activeTab === 'admin' && <AdminPanel />}
       </main>
+      {/* MOBILE BOTTOM NAV */}
+      <nav className="lg:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 z-40 flex justify-around py-2 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        {navItems.map(i => (
+          <button 
+            key={i.id} 
+            onClick={() => setActiveTab(i.id)} 
+            className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === i.id ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+          >
+            <i.icon className="w-5 h-5" />
+            <span className="text-[10px] font-medium">{i.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
