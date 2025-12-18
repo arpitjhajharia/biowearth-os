@@ -16,56 +16,37 @@ const formatDate = (dateStr) => {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-');
 };
 
-// --- NEW COMPONENT: Task Modal (Matches your screenshot) ---
-const TaskModal = ({ isOpen, onClose, initialData, users }) => {
+// --- NEW COMPONENT: Contact Modal ---
+const ContactModal = ({ isOpen, onClose, companyId, initialData }) => {
   if(!isOpen) return null;
-  const [form, setForm] = useState({ priority: 'Normal', status: 'Pending', ...initialData });
-  const [clients, setClients] = useState([]);
-
-  // Fetch Clients for the "Link Client" dropdown
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data`, 'clients'), s => setClients(s.docs.map(d=>({id:d.id, ...d.data()}))));
-    return () => unsub();
-  }, []);
+  const [form, setForm] = useState(initialData || { role: '', email: '', phone: '', linkedin: '' });
 
   const save = async () => {
-    await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'tasks'), { ...form, createdAt: serverTimestamp() });
+    if(!form.name) return alert("Name is required");
+    const col = collection(db, `artifacts/${APP_ID}/public/data`, 'contacts');
+    if(form.id) await updateDoc(doc(col, form.id), form);
+    else await addDoc(col, { ...form, companyId, createdAt: serverTimestamp() });
     onClose();
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-fade-in">
-        <h3 className="font-bold text-lg mb-4">New Task</h3>
-        <div className="space-y-4">
-          <input placeholder="Title" className="w-full p-2 border rounded focus:ring-2 ring-blue-100 outline-none" value={form.title||''} onChange={e=>setForm({...form, title:e.target.value})} autoFocus />
-          <div className="grid grid-cols-2 gap-4">
-            <div className="p-2 border rounded bg-slate-50 text-slate-500 text-sm">{form.contextType}</div>
-            <select className="p-2 border rounded" value={form.priority} onChange={e=>setForm({...form, priority:e.target.value})}><option>Normal</option><option>High</option></select>
-          </div>
-          <div className="p-2 border rounded bg-slate-50 text-slate-700 font-medium">{form.relatedName}</div>
-          <select className="w-full p-2 border rounded" value={form.relatedClientId||''} onChange={e=>setForm({...form, relatedClientId:e.target.value})}>
-            <option value="">Link Client (Optional)...</option>
-            {clients.map(c=><option key={c.id} value={c.id}>{c.companyName}</option>)}
-          </select>
-          <div className="grid grid-cols-2 gap-4">
-            <select className="p-2 border rounded" value={form.assignee||''} onChange={e=>setForm({...form, assignee:e.target.value})}>
-                <option value="">Assignee...</option>
-                {users.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}
-            </select>
-            <input type="date" className="p-2 border rounded" value={form.dueDate||''} onChange={e=>setForm({...form, dueDate:e.target.value})} />
-          </div>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 animate-fade-in">
+        <h3 className="font-bold text-lg mb-4">{form.id ? 'Edit' : 'Add'} Key Person</h3>
+        <div className="space-y-3">
+          <input placeholder="Name" className="w-full p-2 border rounded focus:ring-2 ring-blue-100 outline-none" value={form.name||''} onChange={e=>setForm({...form, name:e.target.value})} autoFocus />
+          <input placeholder="Role / Designation" className="w-full p-2 border rounded" value={form.role||''} onChange={e=>setForm({...form, role:e.target.value})} />
+          <div className="relative"><Mail className="absolute left-3 top-2.5 text-slate-400 w-4 h-4"/><input placeholder="Email Address" className="w-full pl-9 p-2 border rounded" value={form.email||''} onChange={e=>setForm({...form, email:e.target.value})}/></div>
+          <div className="relative"><Phone className="absolute left-3 top-2.5 text-slate-400 w-4 h-4"/><input placeholder="Phone Number" className="w-full pl-9 p-2 border rounded" value={form.phone||''} onChange={e=>setForm({...form, phone:e.target.value})}/></div>
+          <div className="relative"><Linkedin className="absolute left-3 top-2.5 text-slate-400 w-4 h-4"/><input placeholder="LinkedIn Profile URL" className="w-full pl-9 p-2 border rounded" value={form.linkedin||''} onChange={e=>setForm({...form, linkedin:e.target.value})}/></div>
         </div>
-        <div className="flex justify-end gap-2 mt-6">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={save}>Save Changes</Button>
-        </div>
+        <div className="flex justify-end gap-2 mt-6"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={save}>Save Contact</Button></div>
       </div>
     </div>
   );
 };
 
-// --- UPDATED INLINE TASK (Calendar + Dropdown) ---
+// --- NEW COMPONENT: Task Modal (Matches your screenshot) ---
 const InlineTask = ({ task, users }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -242,7 +223,8 @@ export default function DetailPanel({ type, data, onClose }) {
   const [products, setProducts] = useState([]);
   
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false); // <--- New Task Modal State
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [contactModal, setContactModal] = useState({ open: false, data: null });
   const [editOrder, setEditOrder] = useState(null);
 
   useEffect(() => {
@@ -323,7 +305,27 @@ export default function DetailPanel({ type, data, onClose }) {
                  </Card>
                  <Card className="p-4">
                     <h3 className="font-bold text-slate-700 text-sm uppercase mb-4 flex gap-2"><Phone className="w-4 h-4"/> Key People</h3>
-                    <div className="space-y-2">{contacts.map(c => (<div key={c.id} className="p-2 bg-white border border-slate-200 rounded text-sm flex justify-between group"><div><div className="font-bold text-slate-700">{c.name}</div><div className="text-xs text-slate-500">{c.role}</div></div><div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity"><button className="p-1 bg-slate-100 rounded text-blue-500"><Mail className="w-3 h-3"/></button></div></div>))} <button onClick={addContact} className="w-full py-2 border border-dashed border-slate-300 rounded text-xs text-slate-500 hover:text-blue-600">+ Add Contact</button></div>
+                    <div className="space-y-2">
+                       {contacts.map(c => (
+                         <div key={c.id} className="p-3 bg-white border border-slate-200 rounded-lg shadow-sm group hover:border-blue-300 transition-all">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                   <div className="font-bold text-slate-800 text-sm">{c.name}</div>
+                                   <div className="text-xs text-slate-500 font-medium">{c.role || 'No Role'}</div>
+                                </div>
+                                <button onClick={() => setContactModal({ open: true, data: c })} className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-blue-600 transition-opacity"><Edit className="w-3 h-3"/></button>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                                {c.email && <a href={`mailto:${c.email}`} title={c.email} className="p-1.5 bg-slate-50 text-slate-500 rounded hover:bg-blue-50 hover:text-blue-600 transition-colors"><Mail className="w-3.5 h-3.5"/></a>}
+                                {c.phone && <a href={`tel:${c.phone}`} title={c.phone} className="p-1.5 bg-slate-50 text-slate-500 rounded hover:bg-green-50 hover:text-green-600 transition-colors"><Phone className="w-3.5 h-3.5"/></a>}
+                                {c.linkedin && <a href={c.linkedin} target="_blank" title="LinkedIn Profile" className="p-1.5 bg-slate-50 text-slate-500 rounded hover:bg-blue-50 hover:text-blue-700 transition-colors"><Linkedin className="w-3.5 h-3.5"/></a>}
+                            </div>
+                         </div>
+                       ))}
+                       <button onClick={() => setContactModal({ open: true, data: null })} className="w-full mt-2 py-2 text-xs border border-dashed border-slate-300 rounded text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors flex items-center justify-center gap-1">
+                         <Plus className="w-3 h-3"/> Add Contact
+                       </button>
+                    </div>
                  </Card>
               </div>
 
@@ -419,6 +421,13 @@ export default function DetailPanel({ type, data, onClose }) {
         />
 
         <OrderModal isOpen={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} companyId={data.id} orderToEdit={editOrder}/>
+        
+        <ContactModal 
+            isOpen={contactModal.open} 
+            onClose={() => setContactModal({ open: false, data: null })} 
+            companyId={data.id}
+            initialData={contactModal.data}
+        />
       </div>
     </div>
   );
