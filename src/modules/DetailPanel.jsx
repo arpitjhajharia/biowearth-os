@@ -5,22 +5,121 @@ import { useAuth } from "../context/AuthContext";
 import { Card, Button, Badge } from "../components/UI";
 import { 
   X, Edit, Phone, Mail, Linkedin, ExternalLink, Link, Plus, 
-  Trash2, Box, FileText, CheckSquare, Package 
+  Trash2, Box, CheckSquare, Package, Calendar 
 } from "lucide-react";
 
-// Inline Task (Unchanged)
-const InlineTask = ({ task }) => {
+// Helper: Date Format (dd-MMM-yy)
+const formatDate = (dateStr) => {
+  if(!dateStr) return '';
+  const d = new Date(dateStr);
+  if(isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-');
+};
+
+// --- NEW COMPONENT: Task Modal (Matches your screenshot) ---
+const TaskModal = ({ isOpen, onClose, initialData, users }) => {
+  if(!isOpen) return null;
+  const [form, setForm] = useState({ priority: 'Normal', status: 'Pending', ...initialData });
+  const [clients, setClients] = useState([]);
+
+  // Fetch Clients for the "Link Client" dropdown
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data`, 'clients'), s => setClients(s.docs.map(d=>({id:d.id, ...d.data()}))));
+    return () => unsub();
+  }, []);
+
+  const save = async () => {
+    await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'tasks'), { ...form, createdAt: serverTimestamp() });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-fade-in">
+        <h3 className="font-bold text-lg mb-4">New Task</h3>
+        <div className="space-y-4">
+          <input placeholder="Title" className="w-full p-2 border rounded focus:ring-2 ring-blue-100 outline-none" value={form.title||''} onChange={e=>setForm({...form, title:e.target.value})} autoFocus />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-2 border rounded bg-slate-50 text-slate-500 text-sm">{form.contextType}</div>
+            <select className="p-2 border rounded" value={form.priority} onChange={e=>setForm({...form, priority:e.target.value})}><option>Normal</option><option>High</option></select>
+          </div>
+          <div className="p-2 border rounded bg-slate-50 text-slate-700 font-medium">{form.relatedName}</div>
+          <select className="w-full p-2 border rounded" value={form.relatedClientId||''} onChange={e=>setForm({...form, relatedClientId:e.target.value})}>
+            <option value="">Link Client (Optional)...</option>
+            {clients.map(c=><option key={c.id} value={c.id}>{c.companyName}</option>)}
+          </select>
+          <div className="grid grid-cols-2 gap-4">
+            <select className="p-2 border rounded" value={form.assignee||''} onChange={e=>setForm({...form, assignee:e.target.value})}>
+                <option value="">Assignee...</option>
+                {users.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}
+            </select>
+            <input type="date" className="p-2 border rounded" value={form.dueDate||''} onChange={e=>setForm({...form, dueDate:e.target.value})} />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={save}>Save Changes</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- UPDATED INLINE TASK (Calendar + Dropdown) ---
+const InlineTask = ({ task, users }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
+  
   const update = (data) => updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'tasks', task.id), data);
   const handleBlur = () => { setIsEditing(false); if(title !== task.title) update({ title }); };
+
   return (
     <div className="group bg-white p-3 rounded-lg border border-slate-200 shadow-sm hover:border-blue-300 transition-all mb-2">
       <div className="flex gap-3 items-start">
-        <input type="checkbox" checked={task.status === 'Completed'} onChange={(e) => update({ status: e.target.checked ? 'Completed' : 'Pending' })} className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"/>
+        <input type="checkbox" checked={task.status === 'Completed'} onChange={(e) => update({ status: e.target.checked ? 'Completed' : 'Pending' })} className="mt-1 w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer shrink-0"/>
         <div className="flex-1 min-w-0">
-          <div className="mb-1">{isEditing ? (<input className="w-full text-sm border-b border-blue-500 outline-none pb-1" value={title} autoFocus onChange={(e)=>setTitle(e.target.value)} onBlur={handleBlur} onKeyDown={(e)=>e.key==='Enter'&&handleBlur()}/>) : (<div onDoubleClick={() => setIsEditing(true)} className={`text-sm font-medium ${task.status==='Completed'?'line-through text-slate-400':'text-slate-800'}`}>{task.title}</div>)}</div>
-          <div className="flex items-center gap-2 text-xs text-slate-500"><span className={`px-1.5 py-0.5 rounded ${task.priority==='High'?'bg-red-100 text-red-600':'bg-slate-100'}`}>{task.priority}</span><span>{task.dueDate}</span>{task.assignee && <span className="flex items-center gap-1"><div className="w-4 h-4 rounded-full bg-slate-200 text-[9px] flex items-center justify-center">{task.assignee[0]}</div>{task.assignee}</span>}</div>
+          <div className="mb-2">
+            {isEditing ? (
+              <input className="w-full text-sm border-b border-blue-500 outline-none pb-1" value={title} autoFocus onChange={(e)=>setTitle(e.target.value)} onBlur={handleBlur} onKeyDown={(e)=>e.key==='Enter'&&handleBlur()}/>
+            ) : (
+              <div onDoubleClick={() => setIsEditing(true)} className={`text-sm font-medium ${task.status==='Completed'?'line-through text-slate-400':'text-slate-800'}`}>{task.title}</div>
+            )}
+          </div>
+          
+          {/* Controls Row */}
+          <div className="flex items-center gap-2">
+            {/* Date Picker Interface */}
+            <div className="relative group/date">
+                <input 
+                    type="date" 
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    value={task.dueDate || ''}
+                    onChange={(e) => update({ dueDate: e.target.value })}
+                />
+                <div className="flex items-center gap-1 text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-100 group-hover/date:border-blue-200 group-hover/date:text-blue-600">
+                    <Calendar className="w-3 h-3"/>
+                    {task.dueDate ? formatDate(task.dueDate) : 'Set Date'}
+                </div>
+            </div>
+
+            {/* Assignee Dropdown Interface */}
+            <div className="relative group/user">
+                <select 
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    value={task.assignee || ''}
+                    onChange={(e) => update({ assignee: e.target.value })}
+                >
+                    <option value="">Unassigned</option>
+                    {users.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                </select>
+                <div className="flex items-center gap-1 text-xs text-slate-500 bg-slate-50 px-2 py-1 rounded border border-slate-100 group-hover/user:border-blue-200 group-hover/user:text-blue-600">
+                    <div className="w-4 h-4 rounded-full bg-slate-200 text-[9px] flex items-center justify-center font-bold">
+                        {task.assignee ? task.assignee.charAt(0) : '?'}
+                    </div>
+                    <span className="max-w-[80px] truncate">{task.assignee || 'Assign'}</span>
+                </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -133,7 +232,7 @@ const OrderModal = ({ isOpen, onClose, companyId, orderToEdit }) => {
 export default function DetailPanel({ type, data, onClose }) {
   if (!data) return null;
   const isVendor = type === 'vendor';
-  const { user } = useAuth();
+  const { user, usersList } = useAuth(); // <--- Get Users List Here
   
   const [contacts, setContacts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -143,6 +242,7 @@ export default function DetailPanel({ type, data, onClose }) {
   const [products, setProducts] = useState([]);
   
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false); // <--- New Task Modal State
   const [editOrder, setEditOrder] = useState(null);
 
   useEffect(() => {
@@ -166,10 +266,8 @@ export default function DetailPanel({ type, data, onClose }) {
     if(name) await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'contacts'), { companyId: data.id, name, role: 'Staff' });
   };
   
-  const addTask = async () => {
-    const title = prompt("Task Title:");
-    if(title) await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'tasks'), { title, relatedId: data.id, relatedName: data.companyName, contextType: isVendor?'Vendor':'Client', status: 'Pending', priority: 'Normal', createdAt: serverTimestamp() });
-  };
+  // Use Modal instead of prompt
+  const addTask = () => setIsTaskModalOpen(true);
 
   const togglePaymentStatus = async (order, idx) => {
       const newTerms = [...order.paymentTerms];
@@ -218,7 +316,10 @@ export default function DetailPanel({ type, data, onClose }) {
               <div className="space-y-6">
                  <Card className="p-4 max-h-[400px] flex flex-col">
                     <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-700 text-sm uppercase flex gap-2"><CheckSquare className="w-4 h-4"/> Tasks</h3><button onClick={addTask} className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold hover:bg-blue-100">+ Add</button></div>
-                    <div className="flex-1 overflow-y-auto scroller pr-2">{tasks.map(t => <InlineTask key={t.id} task={t} />)}</div>
+                    <div className="flex-1 overflow-y-auto scroller pr-2">
+                       {/* Pass Users List to InlineTask */}
+                       {tasks.map(t => <InlineTask key={t.id} task={t} users={usersList} />)}
+                    </div>
                  </Card>
                  <Card className="p-4">
                     <h3 className="font-bold text-slate-700 text-sm uppercase mb-4 flex gap-2"><Phone className="w-4 h-4"/> Key People</h3>
@@ -295,7 +396,7 @@ export default function DetailPanel({ type, data, onClose }) {
                                         <div className="text-right">
                                             <div className="text-[10px] uppercase font-bold text-slate-400">Investment</div>
                                             <div className="font-bold text-purple-600 text-lg">{formatMoney(val)}</div>
-                                            {q.createdAt && <div className="text-[9px] text-slate-300 mt-1">{new Date(q.createdAt?.seconds*1000).toLocaleDateString()}</div>}
+                                            {q.createdAt && <div className="text-[9px] text-slate-300 mt-1">{formatDate(q.createdAt.seconds ? new Date(q.createdAt.seconds*1000) : new Date())}</div>}
                                         </div>
                                     </div>
                                     {q.driveLink && <div className="mt-2 pt-2 border-t border-slate-50 flex justify-end"><a href={q.driveLink} target="_blank" className="text-blue-500 text-xs flex items-center gap-1 hover:underline"><Link className="w-3 h-3"/> View Quote</a></div>}
@@ -308,6 +409,14 @@ export default function DetailPanel({ type, data, onClose }) {
               </div>
            </div>
         </div>
+
+        {/* Task Modal Overlay */}
+        <TaskModal 
+            isOpen={isTaskModalOpen} 
+            onClose={() => setIsTaskModalOpen(false)} 
+            initialData={{ contextType: isVendor ? 'Vendor' : 'Client', relatedId: data.id, relatedName: data.companyName }}
+            users={usersList}
+        />
 
         <OrderModal isOpen={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} companyId={data.id} orderToEdit={editOrder}/>
       </div>
