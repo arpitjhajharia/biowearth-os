@@ -243,7 +243,78 @@ const OrderModal = ({ isOpen, onClose, companyId, orderToEdit }) => {
     </div>
   );
 };
+// --- NEW COMPONENT: Quote Modal (Sales/Purchase) ---
+const QuoteModal = ({ isOpen, onClose, initialData, vendors, clients, skus, quotesReceived }) => {
+  if (!isOpen) return null;
+  const [form, setForm] = useState(initialData || {});
+  const isSales = !!form.clientId;
 
+  const save = async () => {
+    const col = isSales ? 'quotesSent' : 'quotesReceived';
+    if(form.id) await updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, col, form.id), form);
+    else await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, col), { ...form, createdAt: serverTimestamp() });
+    onClose();
+  };
+
+  // Filter Purchase Quotes for Base Cost Selection (Logic from QuotesModule)
+  const availableBaseCosts = useMemo(() => {
+    if (isSales && form.skuId) return quotesReceived.filter(q => q.skuId === form.skuId);
+    return [];
+  }, [isSales, form.skuId, quotesReceived]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-fade-in">
+        <h3 className="font-bold text-lg mb-4">Edit {isSales ? 'Sales' : 'Purchase'} Quote</h3>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <input placeholder="Quote ID" className="p-2 border rounded" value={form.quoteId||''} onChange={e=>setForm({...form, quoteId:e.target.value})} />
+            <input type="number" placeholder="MOQ" className="p-2 border rounded" value={form.moq||''} onChange={e=>setForm({...form, moq:e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-2 border rounded bg-slate-50 text-slate-500 text-sm truncate">
+                {isSales ? clients.find(c=>c.id===form.clientId)?.companyName : vendors.find(v=>v.id===form.vendorId)?.companyName}
+            </div>
+            <div className="p-2 border rounded bg-slate-50 text-slate-500 text-sm truncate">
+                {skus.find(s=>s.id===form.skuId)?.name}
+            </div>
+          </div>
+          
+          <input placeholder="Quote Doc (Drive Link)" className="w-full p-2 border rounded" value={form.driveLink||''} onChange={e=>setForm({...form, driveLink:e.target.value})}/>
+
+          {isSales && (
+            <div className="border-t pt-4">
+              <label className="text-xs font-bold text-slate-500 uppercase block mb-2">Base Cost Link (Select one):</label>
+              {availableBaseCosts.length > 0 ? (
+                <div className="space-y-2 max-h-32 overflow-y-auto border rounded p-2 bg-slate-50">
+                  {availableBaseCosts.map(bc => {
+                    const v = vendors.find(ven => ven.id === bc.vendorId);
+                    return (
+                      <label key={bc.id} className="flex items-center gap-2 text-xs p-1 hover:bg-white rounded cursor-pointer">
+                        <input type="radio" name="baseCost" checked={form.baseCostId === bc.id} onChange={() => setForm({...form, baseCostId: bc.id, baseCostPrice: bc.price})} className="text-blue-600"/>
+                        <span><span className="font-bold text-slate-700">{v?.companyName}</span>: {formatMoney(bc.price)} (MOQ: {bc.moq})</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : <div className="text-xs text-slate-400 italic">No purchase quotes available.</div>}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4 mt-2">
+            <input type="number" placeholder="Price" className="p-2 border rounded" value={isSales?form.sellingPrice:form.price} onChange={e=>setForm({...form, [isSales?'sellingPrice':'price']:e.target.value})} />
+            <select className="p-2 border rounded" value={form.currency||'INR'} onChange={e=>setForm({...form, currency:e.target.value})}><option>INR</option><option>USD</option></select>
+          </div>
+          
+          {isSales && (
+             <select className="w-full p-2 border rounded" value={form.status||'Draft'} onChange={e=>setForm({...form, status:e.target.value})}><option>Draft</option><option>Active</option><option>Closed</option></select>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 mt-6"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button onClick={save}>Save Changes</Button></div>
+      </div>
+    </div>
+  );
+};
 // --- MAIN DETAIL PANEL ---
 export default function DetailPanel({ type, data, onClose }) {
   if (!data) return null;
@@ -254,9 +325,13 @@ export default function DetailPanel({ type, data, onClose }) {
   const [orders, setOrders] = useState([]);
  const [tasks, setTasks] = useState([]);
   const [quotes, setQuotes] = useState([]);
-  const [baseQuotes, setBaseQuotes] = useState([]); // <--- Added for lookup
+  const [baseQuotes, setBaseQuotes] = useState([]); 
   const [skus, setSkus] = useState([]);
   const [products, setProducts] = useState([]);
+  const [vendors, setVendors] = useState([]); // <--- Added
+  const [clients, setClients] = useState([]); // <--- Added
+  
+  const [quoteModal, setQuoteModal] = useState({ open: false, data: null }); // <--- Added Modal State
   
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -273,9 +348,12 @@ export default function DetailPanel({ type, data, onClose }) {
       onSnapshot(query(collection(db, path, 'orders'), where('companyId', '==', data.id)), s => setOrders(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(collection(db, path, 'tasks'), where('relatedId', '==', data.id)), s => setTasks(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(collection(db, path, quoteCol), where(quoteField, '==', data.id)), s => setQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))),
-      onSnapshot(collection(db, path, 'quotesReceived'), s => setBaseQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))), // <--- Added fetch
+      onSnapshot(collection(db, path, 'quotesReceived'), s => setBaseQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'skus'), s => setSkus(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'products'), s => setProducts(s.docs.map(d=>({id:d.id, ...d.data()})))),
+      // --- NEW LINES ADDED BELOW ---
+      onSnapshot(collection(db, path, 'vendors'), s => setVendors(s.docs.map(d=>({id:d.id, ...d.data()})))),
+      onSnapshot(collection(db, path, 'clients'), s => setClients(s.docs.map(d=>({id:d.id, ...d.data()})))),
     ];
     return () => unsubs.forEach(u => u());
   }, [data.id, isVendor]);
@@ -448,61 +526,59 @@ export default function DetailPanel({ type, data, onClose }) {
                                         </div>
                                     </div>
 
-                                    {/* Quote List */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {group.quotes.map(q => {
-                                            const baseQuote = baseQuotes.find(bq => bq.id === q.baseCostId);
+                                    {/* Quote List (Rows) */}
+                                    <div className="space-y-4">
+                                        {group.quotes.map((q, idx) => {
                                             const val = isVendor ? (q.price*q.moq) : (q.sellingPrice*q.moq);
                                             const margin = !isVendor ? (val - ((q.baseCostPrice||0) * q.moq)) : 0;
                                             const unitMargin = !isVendor ? (q.sellingPrice - (q.baseCostPrice||0)) : 0;
+                                            
+                                            // Dim if not the first item, undim on hover
+                                            const rowOpacity = idx === 0 ? 'opacity-100' : 'opacity-60 hover:opacity-100 transition-opacity duration-200';
 
                                             return (
-                                                <div key={q.id} className="border border-slate-100 rounded-lg p-4 bg-slate-50/50 hover:bg-white hover:shadow-md transition-all relative group/card">
-                                                    <div className="grid grid-cols-3 gap-4">
-                                                        {/* Col 1: Base Cost (Client View) or Unit Rate (Vendor View) */}
-                                                        <div>
-                                                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">{isVendor ? 'Unit Rate' : 'Base Cost'}</div>
-                                                            <div className="font-medium text-slate-700">
-                                                                {formatMoney(isVendor ? q.price : (q.baseCostPrice || 0))} <span className="text-xs text-slate-400">/u</span>
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-500">MOQ: {isVendor ? q.moq : (baseQuote?.moq || 'N/A')}</div>
+                                                <div key={q.id} className={`grid grid-cols-[1.5fr_1fr_1fr_auto] items-center gap-2 text-sm ${idx > 0 ? 'border-t border-slate-50 pt-2' : ''} ${rowOpacity} group/line`}>
+                                                    {/* Col 1: Base Cost */}
+                                                    <div className="text-left">
+                                                        {idx === 0 && <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">{isVendor ? 'Unit Rate' : 'Base Cost'}</div>}
+                                                        <div className="text-sm text-slate-700 font-medium">
+                                                            {formatMoney(isVendor ? q.price : (q.baseCostPrice || 0))} 
+                                                            <span className="text-slate-400 text-xs font-normal"> / u</span>
                                                         </div>
-
-                                                        {/* Col 2: Selling Price (Client View) or Investment (Vendor View) */}
-                                                        <div>
-                                                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">{isVendor ? 'Investment' : 'Selling Price'}</div>
-                                                            {isVendor ? (
-                                                                <div className="font-bold text-purple-600 text-lg">{formatMoney(val)}</div>
-                                                            ) : (
-                                                                <>
-                                                                    <div className="font-bold text-slate-800 text-lg">{formatMoney(q.sellingPrice)} <span className="text-xs font-normal text-slate-400">/u</span></div>
-                                                                    <div className="text-[10px] text-slate-500">MOQ: {q.moq}</div>
-                                                                </>
-                                                            )}
-                                                        </div>
-
-                                                        {/* Col 3: Margin (Client View) or Date (Vendor View) */}
-                                                        <div className="text-right">
-                                                            {isVendor ? (
-                                                                <>
-                                                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Date</div>
-                                                                    <div className="font-bold text-slate-700">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Margin</div>
-                                                                    <div className={`font-bold text-lg ${margin>0?'text-green-600':'text-red-600'}`}>{formatMoney(margin)}</div>
-                                                                    <div className={`text-[10px] ${margin>0?'text-green-600':'text-red-600'}`}>{formatMoney(unitMargin)} /u</div>
-                                                                    <div className="text-[9px] text-slate-300 mt-1">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
-                                                                </>
-                                                            )}
-                                                        </div>
+                                                        <div className="text-[10px] text-slate-500">MOQ: {isVendor ? q.moq : (baseQuotes.find(b=>b.id===q.baseCostId)?.moq || 'N/A')}</div>
                                                     </div>
-                                                    
-                                                    {/* Actions Overlay */}
-                                                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
-                                                        <button onClick={() => setModal({open:true, type:isVendor?'quoteReceived':'quoteSent', data:q, isEdit:true})} className="p-1 bg-white border rounded text-blue-500 hover:text-blue-700"><Edit className="w-3 h-3"/></button>
-                                                        {q.driveLink && <a href={q.driveLink} target="_blank" className="p-1 bg-white border rounded text-slate-500 hover:text-slate-700"><FileText className="w-3 h-3"/></a>}
+
+                                                    {/* Col 2: Sales Rate (renamed from Selling Price) */}
+                                                    <div className="text-center relative">
+                                                        {idx === 0 && <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">{isVendor ? 'Investment' : 'Sales Rate'}</div>}
+                                                        <div className={`font-medium text-sm ${isVendor ? 'text-purple-700' : 'text-slate-700'}`}>
+                                                            {isVendor ? formatMoney(val) : formatMoney(q.sellingPrice)}
+                                                            {!isVendor && <span className="text-slate-400 text-xs font-normal"> / u</span>}
+                                                        </div>
+                                                        {!isVendor && <div className="text-[10px] text-slate-500">MOQ: {q.moq}</div>}
+                                                    </div>
+
+                                                    {/* Col 3: Margin */}
+                                                    <div className="text-right">
+                                                        {isVendor ? (
+                                                            <div>
+                                                                {idx === 0 && <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Date</div>}
+                                                                <div className="text-xs font-medium text-slate-600">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
+                                                            </div>
+                                                        ) : (
+                                                            <div>
+                                                                {idx === 0 && <div className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">Margin</div>}
+                                                                <div className={`text-lg font-bold leading-none ${unitMargin > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(margin)}</div>
+                                                                <div className={`text-[10px] mt-0.5 ${unitMargin > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(unitMargin)} / u</div>
+                                                                <div className="text-[9px] text-slate-300 mt-0.5">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Col 4: Actions (Hover only) */}
+                                                    <div className="w-16 flex justify-end gap-1 opacity-0 group-hover/line:opacity-100 transition-opacity">
+                                                         <button onClick={() => setQuoteModal({open:true, data:q})} className="text-blue-500 p-1 hover:bg-blue-50 rounded"><Edit className="w-3 h-3"/></button>
+                                                         {q.driveLink && <a href={q.driveLink} target="_blank" className="text-slate-500 p-1 hover:bg-slate-50 rounded"><FileText className="w-3 h-3"/></a>}
                                                     </div>
                                                 </div>
                                             );
@@ -533,6 +609,15 @@ export default function DetailPanel({ type, data, onClose }) {
             onClose={() => setContactModal({ open: false, data: null })} 
             companyId={data.id}
             initialData={contactModal.data}
+        />
+        <QuoteModal 
+            isOpen={quoteModal.open} 
+            onClose={() => setQuoteModal({ open: false, data: null })} 
+            initialData={quoteModal.data}
+            vendors={vendors}
+            clients={clients}
+            skus={skus}
+            quotesReceived={baseQuotes}
         />
       </div>
     </div>
