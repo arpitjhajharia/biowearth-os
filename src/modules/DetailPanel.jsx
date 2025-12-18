@@ -370,10 +370,11 @@ export default function DetailPanel({ type, data, onClose }) {
   }, [quotes]);
   const addTask = () => setIsTaskModalOpen(true);
 
-  const togglePaymentStatus = async (order, idx) => {
-      const newTerms = [...order.paymentTerms];
-      newTerms[idx].status = newTerms[idx].status === 'Paid' ? 'Pending' : 'Paid';
-      await updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', order.id), { paymentTerms: newTerms });
+  const updateOrderDoc = async (order, docName, field, value) => {
+      const currentDoc = order.docRequirements?.[docName] || {};
+      const newDoc = { ...currentDoc, [field]: value };
+      const newReqs = { ...order.docRequirements, [docName]: newDoc };
+      await updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', order.id), { docRequirements: newReqs });
   };
   
   const potentialValue = quotes.reduce((acc, q) => {
@@ -447,62 +448,109 @@ export default function DetailPanel({ type, data, onClose }) {
               </div>
 
               <div className="lg:col-span-2 space-y-6">
-                 {/* ORDER HISTORY */}
+                 {/* ORDERS SECTION */}
                  <Card className="p-5 border-blue-100 bg-blue-50/30">
                     <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-800 text-lg flex gap-2"><Box className="w-5 h-5 text-blue-600"/> Order History</h3><Button size="sm" onClick={() => { setEditOrder(null); setIsOrderModalOpen(true); }}>+ New Order</Button></div>
                     <div className="space-y-4">
-                       {orders.length > 0 ? orders.map(o => (
-                          <div key={o.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-4 group">
-                             <div className="flex justify-between items-start mb-4 border-b border-slate-50 pb-4">
-                                <div>
-                                   <div className="flex gap-2 mb-1"><span className="font-mono text-xs font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">#{o.orderId}</span><span className="text-xs text-slate-400">{o.date}</span></div>
-                                   <div className="text-lg font-bold text-slate-800">
-                                      {skus.find(s=>s.id===o.skuId)?.name || 'Unknown SKU'}
-                                      <Badge color="slate" size="xs" className="ml-2">{skus.find(s=>s.id===o.skuId)?.variant}</Badge>
-                                   </div>
-                                   <div className="text-xs text-slate-500 mt-1 font-mono">{o.qty} units @ {formatMoney(o.rate)} (+{o.taxRate}% tax)</div>
-                                </div>
-                                <div className="text-right">
-                                   <div className="text-2xl font-bold text-slate-800">{formatMoney(o.amount)}</div>
-                                   <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-2">Total Amount</div>
-                                   <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>{setEditOrder(o); setIsOrderModalOpen(true)}} className="p-1 text-blue-500 bg-blue-50 rounded"><Edit className="w-4 h-4"/></button><button onClick={()=>deleteDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', o.id))} className="p-1 text-red-500 bg-red-50 rounded"><Trash2 className="w-4 h-4"/></button></div>
-                                </div>
-                             </div>
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">Payment Milestones</div>
-                                    <div className="space-y-2">
-                                        {(o.paymentTerms||[]).map((t, i) => (
-                                            <div key={i} className="flex justify-between items-center text-xs bg-slate-50 p-2 rounded border border-slate-100">
-                                                <div>
-                                                    <span className="font-medium text-slate-700 block">{t.label}</span>
-                                                    <span className="text-slate-400 text-[10px]">({t.percent}%)</span>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="font-mono text-slate-600">{formatMoney((o.amount * t.percent)/100)}</span>
-                                                    <button onClick={()=>togglePaymentStatus(o, i)} className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.status==='Paid'?'bg-green-100 text-green-700':'bg-yellow-100 text-yellow-700'}`}>{t.status}</button>
-                                                </div>
-                                            </div>
-                                        ))}
+                       {orders.length > 0 ? orders.map(o => {
+                          const sku = skus.find(s => s.id === o.skuId);
+                          const prod = products.find(p => p.id === sku?.productId);
+                          
+                          return (
+                              <div key={o.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden p-6 group transition-shadow hover:shadow-md">
+                                 {/* Header Row */}
+                                 <div className="flex justify-between items-start mb-6 pb-6 border-b border-slate-100">
+                                    <div>
+                                       <div className="flex items-center gap-2 mb-2">
+                                          <span className="font-mono text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded">#{o.orderId || 'ORD-??'}</span>
+                                          <span className="text-xs text-slate-400">{o.date}</span>
+                                       </div>
+                                       <div className="flex items-center gap-3">
+                                          <h4 className="text-2xl font-bold text-slate-800">{prod?.name || 'Unknown Product'}</h4>
+                                          <Badge color="slate">{sku?.variant}</Badge>
+                                       </div>
+                                       <div className="text-sm text-slate-500 font-medium mt-1">
+                                          {sku?.variant} • {sku?.packSize}{sku?.unit} • {sku?.packType} • {sku?.flavour}
+                                       </div>
+                                       <div className="mt-2 inline-block bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs font-mono text-slate-600">
+                                          {o.qty} units @ {formatMoney(o.rate)} (+{o.taxRate}% tax)
+                                       </div>
                                     </div>
-                                </div>
-                                <div>
-                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-2">Document Checklist</div>
-                                    <div className="space-y-2">
-                                        {Object.entries(o.docRequirements||{}).map(([doc, stat]) => (
-                                            <div key={doc} className="flex justify-between items-center text-xs bg-white border border-slate-100 p-2 rounded">
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`w-4 h-4 rounded flex items-center justify-center ${stat.received?'bg-blue-600 text-white':'bg-slate-200 text-slate-400'}`}><CheckSquare className="w-3 h-3"/></div>
-                                                    <span className={stat.received?'text-slate-700 font-medium':'text-slate-400'}>{doc}</span>
-                                                </div>
-                                                {stat.link && <a href={stat.link} target="_blank" className="text-blue-500 hover:underline flex items-center gap-1"><Link className="w-3 h-3"/> View</a>}
-                                            </div>
-                                        ))}
+                                    <div className="text-right">
+                                       <div className="text-3xl font-bold text-slate-800">{formatMoney(o.amount)}</div>
+                                       <div className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-2">Total Amount</div>
+                                       <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button onClick={()=>{setEditOrder(o); setIsOrderModalOpen(true)}} className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"><Edit className="w-4 h-4"/></button>
+                                          <button onClick={()=>deleteDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', o.id))} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-4 h-4"/></button>
+                                       </div>
                                     </div>
-                                </div>
-                             </div>
-                          </div>
-                       )) : <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-lg">No orders found.</div>}
+                                 </div>
+
+                                 {/* Bottom Grid */}
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    {/* Payment Milestones */}
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-3">Payment Milestones</div>
+                                        <div className="space-y-2">
+                                            {(o.paymentTerms||[]).map((t, i) => (
+                                                <div key={i} className="flex justify-between items-center text-sm bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                                    <div>
+                                                        <span className="font-medium text-slate-700 block">{t.label}</span>
+                                                        <span className="text-slate-400 text-xs">({t.percent}%)</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="font-mono text-slate-600 font-medium">{formatMoney((o.amount * t.percent)/100)}</span>
+                                                        <button 
+                                                            onClick={()=>togglePaymentStatus(o, i)} 
+                                                            className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border transition-all ${t.status==='Paid'?'bg-green-100 text-green-700 border-green-200 hover:bg-green-200':'bg-yellow-100 text-yellow-700 border-yellow-200 hover:bg-yellow-200'}`}
+                                                        >
+                                                            {t.status}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {(!o.paymentTerms || o.paymentTerms.length === 0) && <div className="text-sm text-slate-400 italic">No milestones defined.</div>}
+                                        </div>
+                                    </div>
+
+                                    {/* Document Checklist */}
+                                    <div>
+                                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-3">Document Checklist</div>
+                                        <div className="space-y-2">
+                                            {Object.entries(o.docRequirements||{}).map(([docName, stat]) => (
+                                                <div key={docName} className={`border rounded-lg p-3 transition-colors ${stat.received ? 'bg-white border-blue-200 shadow-sm' : 'bg-slate-50 border-slate-100'}`}>
+                                                    <div className="flex items-center gap-3">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={stat.received} 
+                                                            onChange={(e) => updateOrderDoc(o, docName, 'received', e.target.checked)}
+                                                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-0 cursor-pointer"
+                                                        />
+                                                        <span className={`text-sm font-medium ${stat.received ? 'text-slate-800' : 'text-slate-500'}`}>{docName}</span>
+                                                        {stat.link && stat.received && (
+                                                            <a href={stat.link} target="_blank" className="ml-auto text-blue-600 hover:underline text-xs flex items-center gap-1 bg-blue-50 px-2 py-1 rounded"><Link className="w-3 h-3"/> View</a>
+                                                        )}
+                                                    </div>
+                                                    {stat.received && (
+                                                        <div className="mt-2 pl-7">
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="Paste Drive Link..." 
+                                                                className="w-full text-xs bg-transparent border-b border-slate-200 focus:border-blue-500 outline-none py-1 text-slate-600 placeholder:text-slate-300 transition-colors"
+                                                                value={stat.link || ''}
+                                                                onChange={(e) => updateOrderDoc(o, docName, 'link', e.target.value)}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {Object.keys(o.docRequirements||{}).length === 0 && <div className="text-sm text-slate-400 italic">No documents required.</div>}
+                                        </div>
+                                    </div>
+                                 </div>
+                              </div>
+                          );
+                       }) : <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-white">No orders found. Click "New Order" to start.</div>}
                     </div>
                  </Card>
 
