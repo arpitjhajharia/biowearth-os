@@ -16,7 +16,7 @@ const formatDate = (dateStr) => {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/ /g, '-');
 };
 
-// --- NEW COMPONENT: Contact Modal ---
+// --- COMPONENT: Contact Modal ---
 const ContactModal = ({ isOpen, onClose, companyId, initialData }) => {
   if(!isOpen) return null;
   const [form, setForm] = useState(initialData || { role: '', email: '', phone: '', linkedin: '' });
@@ -46,7 +46,55 @@ const ContactModal = ({ isOpen, onClose, companyId, initialData }) => {
   );
 };
 
-// --- NEW COMPONENT: Task Modal (Matches your screenshot) ---
+// --- COMPONENT: Task Modal ---
+const TaskModal = ({ isOpen, onClose, initialData, users }) => {
+  if(!isOpen) return null;
+  const [form, setForm] = useState({ priority: 'Normal', status: 'Pending', ...initialData });
+  const [clients, setClients] = useState([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data`, 'clients'), s => setClients(s.docs.map(d=>({id:d.id, ...d.data()}))));
+    return () => unsub();
+  }, []);
+
+  const save = async () => {
+    await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'tasks'), { ...form, createdAt: serverTimestamp() });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-fade-in">
+        <h3 className="font-bold text-lg mb-4">New Task</h3>
+        <div className="space-y-4">
+          <input placeholder="Title" className="w-full p-2 border rounded focus:ring-2 ring-blue-100 outline-none" value={form.title||''} onChange={e=>setForm({...form, title:e.target.value})} autoFocus />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-2 border rounded bg-slate-50 text-slate-500 text-sm">{form.contextType}</div>
+            <select className="p-2 border rounded" value={form.priority} onChange={e=>setForm({...form, priority:e.target.value})}><option>Normal</option><option>High</option></select>
+          </div>
+          <div className="p-2 border rounded bg-slate-50 text-slate-700 font-medium">{form.relatedName}</div>
+          <select className="w-full p-2 border rounded" value={form.relatedClientId||''} onChange={e=>setForm({...form, relatedClientId:e.target.value})}>
+            <option value="">Link Client (Optional)...</option>
+            {clients.map(c=><option key={c.id} value={c.id}>{c.companyName}</option>)}
+          </select>
+          <div className="grid grid-cols-2 gap-4">
+            <select className="p-2 border rounded" value={form.assignee||''} onChange={e=>setForm({...form, assignee:e.target.value})}>
+                <option value="">Assignee...</option>
+                {users.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}
+            </select>
+            <input type="date" className="p-2 border rounded" value={form.dueDate||''} onChange={e=>setForm({...form, dueDate:e.target.value})} />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={save}>Save Changes</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- COMPONENT: Inline Task (With Calendar & Dropdown) ---
 const InlineTask = ({ task, users }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
@@ -67,9 +115,8 @@ const InlineTask = ({ task, users }) => {
             )}
           </div>
           
-          {/* Controls Row */}
           <div className="flex items-center gap-2">
-            {/* Date Picker Interface */}
+            {/* Date Picker Overlay */}
             <div className="relative group/date">
                 <input 
                     type="date" 
@@ -83,7 +130,7 @@ const InlineTask = ({ task, users }) => {
                 </div>
             </div>
 
-            {/* Assignee Dropdown Interface */}
+            {/* Assignee Dropdown Overlay */}
             <div className="relative group/user">
                 <select 
                     className="absolute inset-0 opacity-0 cursor-pointer"
@@ -107,7 +154,7 @@ const InlineTask = ({ task, users }) => {
   );
 };
 
-// --- UPDATED ORDER MODAL ---
+// --- COMPONENT: Order Modal ---
 const REQUIRED_DOCS_LIST = ["CoA", "MSDS", "Health Certificate", "Organic", "FSSAI", "FDA", "GMP", "Halal", "Kosher"];
 
 const OrderModal = ({ isOpen, onClose, companyId, orderToEdit }) => {
@@ -210,10 +257,11 @@ const OrderModal = ({ isOpen, onClose, companyId, orderToEdit }) => {
   );
 };
 
+// --- MAIN DETAIL PANEL ---
 export default function DetailPanel({ type, data, onClose }) {
   if (!data) return null;
   const isVendor = type === 'vendor';
-  const { user, usersList } = useAuth(); // <--- Get Users List Here
+  const { user, usersList } = useAuth();
   
   const [contacts, setContacts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -248,7 +296,6 @@ export default function DetailPanel({ type, data, onClose }) {
     if(name) await addDoc(collection(db, `artifacts/${APP_ID}/public/data`, 'contacts'), { companyId: data.id, name, role: 'Staff' });
   };
   
-  // Use Modal instead of prompt
   const addTask = () => setIsTaskModalOpen(true);
 
   const togglePaymentStatus = async (order, idx) => {
@@ -304,7 +351,9 @@ export default function DetailPanel({ type, data, onClose }) {
                     </div>
                  </Card>
                  <Card className="p-4">
-                    <h3 className="font-bold text-slate-700 text-sm uppercase mb-4 flex gap-2"><Phone className="w-4 h-4"/> Key People</h3>
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-slate-700 text-sm uppercase flex gap-2"><Phone className="w-4 h-4 text-slate-400"/> Key People</h3>
+                    </div>
                     <div className="space-y-2">
                        {contacts.map(c => (
                          <div key={c.id} className="p-3 bg-white border border-slate-200 rounded-lg shadow-sm group hover:border-blue-300 transition-all">
@@ -342,7 +391,7 @@ export default function DetailPanel({ type, data, onClose }) {
                                    <div className="font-bold text-slate-800">{o.qty} units @ {o.rate}</div>
                                 </div>
                                 <div className="text-right">
-                                   <div className="text-lg font-bold text-slate-800">₹{o.amount}</div>
+                                   <div className="text-lg font-bold text-slate-800">{formatMoney(o.amount)}</div>
                                    <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={()=>{setEditOrder(o); setIsOrderModalOpen(true)}} className="p-1 text-blue-500"><Edit className="w-3 h-3"/></button><button onClick={()=>deleteDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'orders', o.id))} className="p-1 text-red-500"><Trash2 className="w-3 h-3"/></button></div>
                                 </div>
                              </div>
