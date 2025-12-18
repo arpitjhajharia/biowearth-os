@@ -252,8 +252,9 @@ export default function DetailPanel({ type, data, onClose }) {
   
   const [contacts, setContacts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [tasks, setTasks] = useState([]);
+ const [tasks, setTasks] = useState([]);
   const [quotes, setQuotes] = useState([]);
+  const [baseQuotes, setBaseQuotes] = useState([]); // <--- Added for lookup
   const [skus, setSkus] = useState([]);
   const [products, setProducts] = useState([]);
   
@@ -272,12 +273,23 @@ export default function DetailPanel({ type, data, onClose }) {
       onSnapshot(query(collection(db, path, 'orders'), where('companyId', '==', data.id)), s => setOrders(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(collection(db, path, 'tasks'), where('relatedId', '==', data.id)), s => setTasks(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(query(collection(db, path, quoteCol), where(quoteField, '==', data.id)), s => setQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))),
+      onSnapshot(collection(db, path, 'quotesReceived'), s => setBaseQuotes(s.docs.map(d=>({id:d.id, ...d.data()})))), // <--- Added fetch
       onSnapshot(collection(db, path, 'skus'), s => setSkus(s.docs.map(d=>({id:d.id, ...d.data()})))),
       onSnapshot(collection(db, path, 'products'), s => setProducts(s.docs.map(d=>({id:d.id, ...d.data()})))),
     ];
     return () => unsubs.forEach(u => u());
   }, [data.id, isVendor]);
-
+// Group Quotes by SKU for cleaner display
+  const quoteGroups = useMemo(() => {
+    const groups = {};
+    quotes.forEach(q => {
+      if (!groups[q.skuId]) groups[q.skuId] = [];
+      groups[q.skuId].push(q);
+    });
+    // Sort quotes in each group by date (newest first)
+    Object.keys(groups).forEach(k => groups[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)));
+    return Object.keys(groups).map(skuId => ({ skuId, quotes: groups[skuId] }));
+  }, [quotes]);
   const addTask = () => setIsTaskModalOpen(true);
 
   const togglePaymentStatus = async (order, idx) => {
@@ -416,47 +428,90 @@ export default function DetailPanel({ type, data, onClose }) {
                     </div>
                  </Card>
 
-                 {/* QUOTES / PRODUCT INTERESTS (Clean Layout) */}
+                 {/* QUOTES / PRODUCT INTERESTS */}
                  <div>
                     <h3 className="font-bold text-slate-800 text-lg flex gap-2 mb-4"><Package className="w-5 h-5 text-blue-600"/> {isVendor ? 'Purchase Quotes' : 'Product Interests'}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {quotes.map(q => {
-                            const sku = skus.find(s => s.id === q.skuId);
+                    <div className="space-y-4">
+                        {quoteGroups.map(group => {
+                            const sku = skus.find(s => s.id === group.skuId);
                             const prod = products.find(p => p.id === sku?.productId);
-                            const val = isVendor ? (q.price*q.moq) : (q.sellingPrice*q.moq);
+                            
                             return (
-                                <div key={q.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-blue-300 transition-colors flex flex-col justify-between h-full">
-                                    <div>
-                                        <div className="flex justify-between items-start mb-1">
-                                            <div className="font-bold text-slate-800 text-xl">{prod?.name || 'Unknown'}</div>
-                                            <Badge color={q.status==='Active'?'green':'blue'}>{q.status || 'Draft'}</Badge>
+                                <div key={group.skuId} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                    {/* Header */}
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="font-bold text-xl text-slate-800">{prod?.name || 'Unknown Product'}</div>
+                                        <Badge color="slate">{sku?.variant}</Badge>
+                                        <span className="text-xs text-slate-500">{sku?.packSize}{sku?.unit} • {sku?.packType} • {sku?.flavour}</span>
+                                        <div className="ml-auto">
+                                            {group.quotes.some(q=>q.status==='Active') ? <Badge color="green">Active</Badge> : <Badge color="slate">Draft</Badge>}
                                         </div>
-                                        <div className="flex gap-2 mb-4">
-                                            <Badge size="xs" color="slate">{sku?.variant}</Badge>
-                                            <span className="text-xs text-slate-500">{sku?.packSize}{sku?.unit} • {sku?.packType} • {sku?.flavour}</span>
-                                        </div>
-                                        
-                                        <div className="grid grid-cols-3 gap-4 border-t border-slate-50 pt-4">
-                                            <div>
-                                                <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Unit Rate</div>
-                                                <div className="font-bold text-lg text-slate-700">₹{isVendor ? q.price : q.sellingPrice}<span className="text-sm font-normal text-slate-400">/u</span></div>
-                                                <div className="text-[10px] text-slate-400">MOQ: {q.moq}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Investment</div>
-                                                <div className="font-bold text-lg text-purple-600">{formatMoney(val)}</div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Date</div>
-                                                <div className="font-bold text-slate-700">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
-                                                {q.driveLink && <a href={q.driveLink} target="_blank" className="text-blue-500 hover:text-blue-700 inline-block mt-1"><FileText className="w-4 h-4"/></a>}
-                                            </div>
-                                        </div>
+                                    </div>
+
+                                    {/* Quote List */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {group.quotes.map(q => {
+                                            const baseQuote = baseQuotes.find(bq => bq.id === q.baseCostId);
+                                            const val = isVendor ? (q.price*q.moq) : (q.sellingPrice*q.moq);
+                                            const margin = !isVendor ? (val - ((q.baseCostPrice||0) * q.moq)) : 0;
+                                            const unitMargin = !isVendor ? (q.sellingPrice - (q.baseCostPrice||0)) : 0;
+
+                                            return (
+                                                <div key={q.id} className="border border-slate-100 rounded-lg p-4 bg-slate-50/50 hover:bg-white hover:shadow-md transition-all relative group/card">
+                                                    <div className="grid grid-cols-3 gap-4">
+                                                        {/* Col 1: Base Cost (Client View) or Unit Rate (Vendor View) */}
+                                                        <div>
+                                                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">{isVendor ? 'Unit Rate' : 'Base Cost'}</div>
+                                                            <div className="font-medium text-slate-700">
+                                                                {formatMoney(isVendor ? q.price : (q.baseCostPrice || 0))} <span className="text-xs text-slate-400">/u</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-500">MOQ: {isVendor ? q.moq : (baseQuote?.moq || 'N/A')}</div>
+                                                        </div>
+
+                                                        {/* Col 2: Selling Price (Client View) or Investment (Vendor View) */}
+                                                        <div>
+                                                            <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">{isVendor ? 'Investment' : 'Selling Price'}</div>
+                                                            {isVendor ? (
+                                                                <div className="font-bold text-purple-600 text-lg">{formatMoney(val)}</div>
+                                                            ) : (
+                                                                <>
+                                                                    <div className="font-bold text-slate-800 text-lg">{formatMoney(q.sellingPrice)} <span className="text-xs font-normal text-slate-400">/u</span></div>
+                                                                    <div className="text-[10px] text-slate-500">MOQ: {q.moq}</div>
+                                                                </>
+                                                            )}
+                                                        </div>
+
+                                                        {/* Col 3: Margin (Client View) or Date (Vendor View) */}
+                                                        <div className="text-right">
+                                                            {isVendor ? (
+                                                                <>
+                                                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Date</div>
+                                                                    <div className="font-bold text-slate-700">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Margin</div>
+                                                                    <div className={`font-bold text-lg ${margin>0?'text-green-600':'text-red-600'}`}>{formatMoney(margin)}</div>
+                                                                    <div className={`text-[10px] ${margin>0?'text-green-600':'text-red-600'}`}>{formatMoney(unitMargin)} /u</div>
+                                                                    <div className="text-[9px] text-slate-300 mt-1">{q.createdAt ? formatDate(q.createdAt.seconds*1000) : '-'}</div>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Actions Overlay */}
+                                                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                                                        <button onClick={() => setModal({open:true, type:isVendor?'quoteReceived':'quoteSent', data:q, isEdit:true})} className="p-1 bg-white border rounded text-blue-500 hover:text-blue-700"><Edit className="w-3 h-3"/></button>
+                                                        {q.driveLink && <a href={q.driveLink} target="_blank" className="p-1 bg-white border rounded text-slate-500 hover:text-slate-700"><FileText className="w-3 h-3"/></a>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             );
                         })}
-                        {quotes.length === 0 && <div className="col-span-2 text-center py-8 text-slate-400 border-2 border-dashed rounded-lg">No quotes recorded.</div>}
+                        {quoteGroups.length === 0 && <div className="text-center py-10 text-slate-400 border-2 border-dashed rounded-lg">No quotes recorded.</div>}
                     </div>
                  </div>
               </div>
