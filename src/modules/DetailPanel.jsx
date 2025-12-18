@@ -448,6 +448,7 @@ export default function DetailPanel({ type, data, onClose }) {
               </div>
 
               <div className="lg:col-span-2 space-y-6">
+
                  {/* ORDERS SECTION */}
                  <Card className="p-5 border-blue-100 bg-blue-50/30">
                     <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-800 text-lg flex gap-2"><Box className="w-5 h-5 text-blue-600"/> Order History</h3><Button size="sm" onClick={() => { setEditOrder(null); setIsOrderModalOpen(true); }}>+ New Order</Button></div>
