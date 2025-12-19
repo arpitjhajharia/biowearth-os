@@ -32,7 +32,59 @@ const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 };
 
-// --- HELPER: Filter Header ---
+// --- HELPER: Multi-Select Toolbar (For Calendar) ---
+const MultiSelectToolbar = ({ label, options, selected = [], onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => { if (ref.current && !ref.current.contains(event.target)) setIsOpen(false); };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (opt) => {
+    const newSelected = selected.includes(opt) 
+      ? selected.filter(s => s !== opt) 
+      : [...selected, opt];
+    onChange(newSelected);
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${selected.length > 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+      >
+        <Filter className="w-3 h-3"/>
+        {label} {selected.length > 0 && `(${selected.length})`}
+        <ChevronDown className="w-3 h-3 opacity-50"/>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 max-h-60 overflow-y-auto">
+          <div className="mb-2 pb-2 border-b border-slate-100 flex justify-between">
+            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange([])}>Clear</button>
+            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange(options)}>Select All</button>
+          </div>
+          {options.map(opt => (
+            <label key={opt} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 cursor-pointer text-xs rounded select-none">
+              <input 
+                type="checkbox" 
+                checked={selected.includes(opt)} 
+                onChange={() => toggleOption(opt)}
+                className="rounded text-blue-600 focus:ring-0 w-3 h-3 border-slate-300"
+              />
+              <span className="truncate text-slate-700">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- HELPER: Filter Header (For Table) ---
 const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterValue, onFilter, options }) => {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
@@ -319,6 +371,7 @@ export default function TaskBoard() {
     dueDate: ''
   });
 
+  // --- 1. LOAD DATA ---
   useEffect(() => {
     const path = `artifacts/${APP_ID}/public/data`;
     const subs = [
@@ -334,6 +387,7 @@ export default function TaskBoard() {
     return () => subs.forEach(fn => fn());
   }, []);
 
+  // --- 2. HELPERS ---
   const crud = {
     update: (id, data) => updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'tasks', id), data),
     del: (id) => { if(confirm('Delete task?')) deleteDoc(doc(db, `artifacts/${APP_ID}/public/data`, 'tasks', id)); }
@@ -342,6 +396,7 @@ export default function TaskBoard() {
   const handleFilter = (key, val) => setFilters(prev => ({ ...prev, [key]: val }));
   const handleSort = (key) => setSort(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
 
+  // --- 3. FILTERED & SORTED DATA ---
   const processedTasks = useMemo(() => {
       return tasks.filter(t => {
           if (filters.title && !t.title?.toLowerCase().includes(filters.title.toLowerCase())) return false;
@@ -361,7 +416,7 @@ export default function TaskBoard() {
   const pendingTasks = processedTasks.filter(t => t.status !== 'Completed');
   const completedTasks = processedTasks.filter(t => t.status === 'Completed');
 
-  // --- CALENDAR LOGIC ---
+  // --- 4. CALENDAR LOGIC ---
   const getCalendarDays = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -393,6 +448,7 @@ export default function TaskBoard() {
       if (taskId && date) crud.update(taskId, { dueDate: date.toISOString().split('T')[0] });
   };
 
+  // --- 5. RENDERERS ---
   const renderCalendar = () => {
     const days = getCalendarDays();
     const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -409,18 +465,20 @@ export default function TaskBoard() {
                         <button onClick={()=>setViewMode('week')} className={`px-3 py-1 rounded ${viewMode==='week'?'bg-white shadow text-blue-600':'text-slate-500'}`}>Week</button>
                     </div>
                 </div>
-                {/* CALENDAR FILTER BAR */}
+                {/* MULTI-SELECT CALENDAR FILTER BAR */}
                 <div className="flex gap-2">
-                    <select className="text-xs p-1 border rounded" value={filters.contextType[0]||''} onChange={e=>handleFilter('contextType', e.target.value ? [e.target.value] : [])}>
-                        <option value="">All Categories</option>
-                        <option value="Internal">Internal</option>
-                        <option value="Client">Client</option>
-                        <option value="Vendor">Vendor</option>
-                    </select>
-                    <select className="text-xs p-1 border rounded" value={filters.assignee[0]||''} onChange={e=>handleFilter('assignee', e.target.value ? [e.target.value] : [])}>
-                        <option value="">All Assignees</option>
-                        {usersList.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}
-                    </select>
+                    <MultiSelectToolbar 
+                        label="Category" 
+                        options={['Internal','Vendor','Client']} 
+                        selected={filters.contextType} 
+                        onChange={(v) => handleFilter('contextType', v)}
+                    />
+                    <MultiSelectToolbar 
+                        label="Assignee" 
+                        options={usersList.map(u=>u.name)} 
+                        selected={filters.assignee} 
+                        onChange={(v) => handleFilter('assignee', v)}
+                    />
                 </div>
                 <div className="flex gap-2">
                     <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft className="w-5 h-5"/></button>
@@ -433,7 +491,8 @@ export default function TaskBoard() {
                 {weekDays.map(d => <div key={d} className="p-2 text-center text-xs font-bold text-slate-400 uppercase tracking-wider">{d}</div>)}
             </div>
             
-            <div className="grid grid-cols-7 flex-1 overflow-y-auto bg-white auto-rows-fr">
+            {/* Calendar Grid - Auto Rows for height expansion */}
+            <div className="grid grid-cols-7 flex-1 overflow-y-auto bg-white auto-rows-auto">
                 {days.map((day, i) => {
                     if(!day) return <div key={i} className="bg-slate-50/50 border-r border-b border-slate-100"></div>;
                     const dateStr = day.toISOString().split('T')[0];
@@ -469,11 +528,11 @@ export default function TaskBoard() {
                                                     onChange={(e) => crud.update(t.id, {status: e.target.checked ? 'Completed' : 'Pending'})}
                                                     className="mt-0.5 w-3 h-3 rounded border-slate-300 cursor-pointer"
                                                 />
-                                                <div className={`leading-tight font-medium ${t.status==='Completed'?'line-through text-slate-400':'text-slate-800'}`}>{t.title}</div>
+                                                <div className={`leading-tight font-medium flex-1 ${t.status==='Completed'?'line-through text-slate-400':'text-slate-800'}`}>{t.title}</div>
                                             </div>
                                             
                                             <div className="flex justify-between items-end mt-1">
-                                                <div className="flex flex-col max-w-[70%]">
+                                                <div className="flex flex-col max-w-[75%]">
                                                     <span className="text-[9px] text-slate-500 font-medium truncate">
                                                         {t.contextType === 'Internal' ? t.taskGroup : t.relatedName}
                                                     </span>
