@@ -3,12 +3,13 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCOBsIw0IMvTViKnU6xD8dO4BfYd_DVMzw",
-  authDomain: "bwg-erp.firebaseapp.com",
-  projectId: "bwg-erp",
-  storageBucket: "bwg-erp.firebasestorage.app",
-  messagingSenderId: "318493308192",
-  appId: "1:318493308192:web:cb12963ae96d3335aad345"
+ apiKey: "AIzaSyCrG4v4iWRTrbuxTDclaQAgVjUL8vOQ0YY",
+  authDomain: "bwg-dashboard.firebaseapp.com",
+  projectId: "bwg-dashboard",
+  storageBucket: "bwg-dashboard.firebasestorage.app",
+  messagingSenderId: "806991630520",
+  appId: "1:806991630520:web:ee0eb972d192288dce244d",
+  measurementId: "G-5PY7NV9S55"
 };
 
 const app = initializeApp(firebaseConfig);
