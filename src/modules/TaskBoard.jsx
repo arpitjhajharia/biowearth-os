@@ -4,11 +4,11 @@ import { db, APP_ID } from "../lib/firebase";
 import { useAuth } from "../context/AuthContext";
 import { Card, Button, Badge } from "../components/UI";
 import { 
-  Calendar, List, Plus, Search, ChevronDown, ChevronRight, 
-  CheckCircle2, Circle, Trash2, Filter, ArrowUp, ArrowDown, Briefcase, User 
+  Calendar, List, Plus, Search, ChevronDown, ChevronRight, ChevronLeft,
+  CheckCircle2, Circle, Trash2, ArrowUp, ArrowDown, Filter
 } from "lucide-react";
 
-// --- HELPER: Color Generator ---
+// --- HELPERS ---
 const getAssigneeColor = (name) => {
   if (!name) return 'bg-slate-100 text-slate-600 border-slate-200';
   const colors = [
@@ -24,6 +24,8 @@ const getAssigneeColor = (name) => {
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
+
+const getInitials = (name) => name ? name.split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase() : '?';
 
 const formatDate = (dateStr) => {
     if(!dateStr) return '-';
@@ -114,7 +116,6 @@ const TaskModal = ({ isOpen, onClose, initialData, vendors, clients, users, sett
     onClose();
   };
 
-  // Helper to handle context Selection
   const handleContextChange = (type) => {
       setForm(prev => ({...prev, contextType: type, relatedId: null, relatedName: null, secondaryVendorId: null, secondaryClientId: null}));
   };
@@ -131,7 +132,6 @@ const TaskModal = ({ isOpen, onClose, initialData, vendors, clients, users, sett
         <div className="space-y-4">
           <input placeholder="Title" className="w-full p-2 border rounded focus:ring-2 ring-blue-100 outline-none font-medium" value={form.title||''} onChange={e=>setForm({...form, title:e.target.value})} autoFocus />
           
-          {/* Category / Context Selection */}
           <div className="space-y-2 border p-3 rounded bg-slate-50">
               <label className="text-xs font-bold text-slate-500 uppercase">Related To</label>
               <div className="flex gap-2 mb-2">
@@ -159,7 +159,6 @@ const TaskModal = ({ isOpen, onClose, initialData, vendors, clients, users, sett
                           <option value="">Select Vendor...</option>
                           {vendors.map(v => <option key={v.id} value={v.id}>{v.companyName}</option>)}
                       </select>
-                      {/* Secondary Link */}
                       <select className="w-full p-2 border rounded text-sm bg-green-50" value={form.secondaryClientId||''} onChange={e=>setForm({...form, secondaryClientId:e.target.value})}>
                           <option value="">Link Client (Optional)...</option>
                           {clients.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
@@ -173,7 +172,6 @@ const TaskModal = ({ isOpen, onClose, initialData, vendors, clients, users, sett
                           <option value="">Select Client...</option>
                           {clients.map(c => <option key={c.id} value={c.id}>{c.companyName}</option>)}
                       </select>
-                      {/* Secondary Link */}
                       <select className="w-full p-2 border rounded text-sm bg-purple-50" value={form.secondaryVendorId||''} onChange={e=>setForm({...form, secondaryVendorId:e.target.value})}>
                           <option value="">Link Vendor (Optional)...</option>
                           {vendors.map(v => <option key={v.id} value={v.id}>{v.companyName}</option>)}
@@ -209,7 +207,8 @@ export default function TaskBoard() {
   const [settings, setSettings] = useState({});
 
   // UI State
-  const [viewMode, setViewMode] = useState('list'); // 'list', 'calendar'
+  const [viewMode, setViewMode] = useState('list');
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [isDoneExpanded, setIsDoneExpanded] = useState(false);
@@ -269,7 +268,103 @@ export default function TaskBoard() {
   const pendingTasks = processedTasks.filter(t => t.status !== 'Completed');
   const completedTasks = processedTasks.filter(t => t.status === 'Completed');
 
-  // --- 4. RENDERERS ---
+  // --- 4. CALENDAR LOGIC ---
+  const getCalendarDays = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const days = [];
+    for(let i=0; i<firstDay.getDay(); i++) days.push(null);
+    for(let i=1; i<=lastDay.getDate(); i++) days.push(new Date(year, month, i));
+    return days;
+  };
+
+  // Drag & Drop Handlers
+  const handleDragStart = (e, taskId) => {
+      e.dataTransfer.setData('taskId', taskId);
+  };
+
+  const handleDrop = (e, date) => {
+      e.preventDefault();
+      const taskId = e.dataTransfer.getData('taskId');
+      if (taskId && date) {
+          const dateStr = date.toISOString().split('T')[0];
+          crud.update(taskId, { dueDate: dateStr });
+      }
+  };
+
+  // --- 5. RENDERERS ---
+  const renderCalendar = () => {
+    const days = getCalendarDays();
+    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    return (
+        <div className="bg-white rounded-lg border border-slate-200 shadow-sm h-full flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg text-slate-800">{currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+                <div className="flex gap-2">
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()-1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronLeft className="w-5 h-5"/></button>
+                    <button onClick={() => setCurrentDate(new Date())} className="text-xs font-bold text-blue-600 px-2">Today</button>
+                    <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth()+1)))} className="p-1 hover:bg-slate-100 rounded"><ChevronRight className="w-5 h-5"/></button>
+                </div>
+            </div>
+            <div className="grid grid-cols-7 border-b border-slate-200 shrink-0">
+                {weekDays.map(d => <div key={d} className="p-2 text-center text-xs font-bold text-slate-400 uppercase tracking-wider">{d}</div>)}
+            </div>
+            <div className="grid grid-cols-7 flex-1 auto-rows-fr overflow-hidden">
+                {days.map((day, i) => {
+                    if(!day) return <div key={i} className="bg-slate-50 border-r border-b border-slate-100"></div>;
+                    const dateStr = day.toISOString().split('T')[0];
+                    const dayTasks = processedTasks.filter(t => t.dueDate === dateStr);
+                    const isToday = new Date().toDateString() === day.toDateString();
+
+                    return (
+                        <div 
+                            key={i} 
+                            className="border-r border-b border-slate-100 p-1 relative hover:bg-slate-50 group min-h-[80px]"
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => handleDrop(e, day)}
+                        >
+                            <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{day.getDate()}</div>
+                            <div className="space-y-1 overflow-y-auto max-h-[100px] no-scrollbar">
+                                {dayTasks.map(t => {
+                                    const colorClass = getAssigneeColor(t.assignee);
+                                    return (
+                                        <div 
+                                            key={t.id} 
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, t.id)}
+                                            onClick={() => { setEditingTask(t); setIsModalOpen(true); }}
+                                            className={`text-[10px] p-1.5 rounded border cursor-grab active:cursor-grabbing mb-1 shadow-sm ${colorClass} ${t.status==='Completed'?'opacity-50 line-through':''}`}
+                                        >
+                                            <div className="flex items-start gap-1.5">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={t.status === 'Completed'} 
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    onChange={(e) => crud.update(t.id, {status: e.target.checked ? 'Completed' : 'Pending'})}
+                                                    className="mt-0.5 w-3 h-3 rounded border-current opacity-60 cursor-pointer"
+                                                />
+                                                <div className="leading-tight font-medium flex-1">{t.title}</div>
+                                            </div>
+                                            <div className="flex justify-between items-center mt-1 pl-4 opacity-80">
+                                                <span className="font-bold">{getInitials(t.assignee)}</span>
+                                                <span className="truncate max-w-[60px]">{t.contextType === 'Internal' ? t.taskGroup : t.relatedName}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <button onClick={() => { setEditingTask({ dueDate: dateStr }); setIsModalOpen(true); }} className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 p-1 bg-white shadow-sm border rounded text-blue-600 hover:bg-blue-50"><Plus className="w-3 h-3"/></button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+  };
+
   const TaskTable = ({ data, showFilters = false }) => (
       <table className="w-full text-sm text-left border-collapse">
         {showFilters && (
@@ -277,8 +372,8 @@ export default function TaskBoard() {
                 <tr>
                     <th className="w-10 px-4 py-3"></th>
                     <th className="px-4 py-3 min-w-[200px]"><FilterHeader label="Task Title" sortKey="title" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.title} onFilter={v=>handleFilter('title',v)} /></th>
-                    <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="Related To" sortKey="relatedName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.relatedName} onFilter={v=>handleFilter('relatedName',v)} /></th>
-                    <th className="px-4 py-3 min-w-[120px]"><FilterHeader label="Category" sortKey="contextType" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.contextType} onFilter={v=>handleFilter('contextType',v)} options={['Internal','Vendor','Client']} /></th>
+                    <th className="px-4 py-3 min-w-[180px]"><FilterHeader label="Related To" sortKey="relatedName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.relatedName} onFilter={v=>handleFilter('relatedName',v)} /></th>
+                    <th className="px-4 py-3 min-w-[100px]"><FilterHeader label="Category" sortKey="contextType" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.contextType} onFilter={v=>handleFilter('contextType',v)} options={['Internal','Vendor','Client']} /></th>
                     <th className="px-4 py-3 min-w-[130px]"><div className="cursor-pointer hover:text-blue-600" onClick={()=>handleSort('dueDate')}>Due Date {sort.key==='dueDate'&&(sort.dir==='asc'?'↑':'↓')}</div></th>
                     <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="Assignee" sortKey="assignee" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.assignee} onFilter={v=>handleFilter('assignee',v)} options={usersList.map(u=>u.name)} /></th>
                     <th className="w-10 px-4 py-3"></th>
@@ -286,74 +381,81 @@ export default function TaskBoard() {
             </thead>
         )}
         <tbody className="divide-y divide-slate-100">
-            {data.map(t => (
-                <tr key={t.id} className="hover:bg-slate-50 group">
-                    <td className="px-4 py-3">
-                        <button onClick={() => crud.update(t.id, { status: t.status === 'Completed' ? 'Pending' : 'Completed' })}>
-                            {t.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <Circle className="w-5 h-5 text-slate-300 hover:text-blue-500" />}
-                        </button>
-                    </td>
-                    
-                    {/* Editable Title */}
-                    <td className="px-4 py-3">
-                        <input 
-                            className={`bg-transparent w-full outline-none focus:border-b focus:border-blue-500 font-medium ${t.status==='Completed'?'text-slate-400 line-through':'text-slate-800'}`}
-                            value={t.title}
-                            onChange={(e) => crud.update(t.id, {title: e.target.value})}
-                        />
-                    </td>
-
-                    {/* Category / Context (Click to Edit full context) */}
-                    <td className="px-4 py-3 cursor-pointer" onClick={() => { setEditingTask(t); setIsModalOpen(true); }}>
-                        <div className="flex flex-col">
-                            {t.relatedName ? <span className="font-medium text-slate-700">{t.relatedName}</span> : <span className="text-slate-400 text-xs">-</span>}
-                            {(t.secondaryVendorId || t.secondaryClientId) && (
-                                <span className="text-[10px] text-slate-400">+ Linked Entity</span>
-                            )}
-                        </div>
-                    </td>
-                    <td className="px-4 py-3">
-                        <Badge size="xs" color={t.contextType==='Vendor'?'purple':t.contextType==='Client'?'green':'blue'}>{t.contextType}</Badge>
-                        {t.contextType === 'Internal' && t.taskGroup && <span className="text-xs text-slate-500 ml-2">{t.taskGroup}</span>}
-                    </td>
-
-                    {/* Editable Date */}
-                    <td className="px-4 py-3">
-                        <div className="relative group/date w-fit">
-                            <span className={`text-xs font-mono cursor-pointer ${!t.dueDate && 'text-slate-300 italic'}`}>{t.dueDate ? formatDate(t.dueDate) : 'Set Date'}</span>
+            {data.map(t => {
+                // Secondary Logic
+                const secondaryName = t.secondaryClientId ? clients.find(c=>c.id===t.secondaryClientId)?.companyName : 
+                                      t.secondaryVendorId ? vendors.find(v=>v.id===t.secondaryVendorId)?.companyName : null;
+                
+                return (
+                    <tr key={t.id} className="hover:bg-slate-50 group">
+                        <td className="px-4 py-3">
+                            <button onClick={() => crud.update(t.id, { status: t.status === 'Completed' ? 'Pending' : 'Completed' })}>
+                                {t.status === 'Completed' ? <CheckCircle2 className="w-5 h-5 text-green-500" /> : <Circle className="w-5 h-5 text-slate-300 hover:text-blue-500" />}
+                            </button>
+                        </td>
+                        
+                        <td className="px-4 py-3">
                             <input 
-                                type="date" 
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                value={t.dueDate || ''}
-                                onChange={(e) => crud.update(t.id, { dueDate: e.target.value })}
+                                className={`bg-transparent w-full outline-none focus:border-b focus:border-blue-500 font-medium ${t.status==='Completed'?'text-slate-400 line-through':'text-slate-800'}`}
+                                value={t.title}
+                                onChange={(e) => crud.update(t.id, {title: e.target.value})}
                             />
-                        </div>
-                    </td>
+                        </td>
 
-                    {/* Editable Assignee */}
-                    <td className="px-4 py-3">
-                        <div className="relative group/assignee w-fit">
-                            <span className={`text-xs px-2 py-1 rounded border font-medium cursor-pointer ${getAssigneeColor(t.assignee)}`}>
-                                {t.assignee || 'Unassigned'}
-                            </span>
-                            <select 
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                value={t.assignee || ''}
-                                onChange={(e) => crud.update(t.id, { assignee: e.target.value })}
-                            >
-                                <option value="">Unassigned</option>
-                                {usersList.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
-                            </select>
-                        </div>
-                    </td>
+                        <td className="px-4 py-3 cursor-pointer" onClick={() => { setEditingTask(t); setIsModalOpen(true); }}>
+                            <div className="flex flex-col">
+                                {t.contextType === 'Internal' ? (
+                                    <span className="font-medium text-slate-700">{t.taskGroup || 'General'}</span>
+                                ) : (
+                                    <span className="font-medium text-slate-700">{t.relatedName || '-'}</span>
+                                )}
+                                {secondaryName && (
+                                    <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                        <Plus className="w-3 h-3"/> {secondaryName}
+                                    </span>
+                                )}
+                            </div>
+                        </td>
+                        <td className="px-4 py-3">
+                            <Badge size="xs" color={t.contextType==='Vendor'?'purple':t.contextType==='Client'?'green':'blue'}>{t.contextType}</Badge>
+                        </td>
 
-                    <td className="px-4 py-3 text-right">
-                        <button onClick={() => crud.del(t.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Trash2 className="w-4 h-4" />
-                        </button>
-                    </td>
-                </tr>
-            ))}
+                        <td className="px-4 py-3">
+                            <div className="relative group/date w-fit">
+                                <span className={`text-xs font-mono cursor-pointer ${!t.dueDate && 'text-slate-300 italic'}`}>{t.dueDate ? formatDate(t.dueDate) : 'Set Date'}</span>
+                                <input 
+                                    type="date" 
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                    value={t.dueDate || ''}
+                                    onChange={(e) => crud.update(t.id, { dueDate: e.target.value })}
+                                />
+                            </div>
+                        </td>
+
+                        <td className="px-4 py-3">
+                            <div className="relative group/assignee w-fit">
+                                <span className={`text-xs px-2 py-1 rounded border font-medium cursor-pointer ${getAssigneeColor(t.assignee)}`}>
+                                    {t.assignee || 'Unassigned'}
+                                </span>
+                                <select 
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                    value={t.assignee || ''}
+                                    onChange={(e) => crud.update(t.id, { assignee: e.target.value })}
+                                >
+                                    <option value="">Unassigned</option>
+                                    {usersList.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                                </select>
+                            </div>
+                        </td>
+
+                        <td className="px-4 py-3 text-right">
+                            <button onClick={() => crud.del(t.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </td>
+                    </tr>
+                );
+            })}
         </tbody>
       </table>
   );
@@ -407,9 +509,7 @@ export default function TaskBoard() {
                 </div>
             </div>
         ) : (
-            <div className="flex items-center justify-center h-full text-slate-400">
-                Calendar View coming in next update.
-            </div>
+            renderCalendar()
         )}
       </div>
 
