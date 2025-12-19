@@ -32,56 +32,12 @@ const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 };
 
-// --- HELPER: Multi-Select Toolbar (For Calendar) ---
-const MultiSelectToolbar = ({ label, options, selected = [], onChange }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => { if (ref.current && !ref.current.contains(event.target)) setIsOpen(false); };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const toggleOption = (opt) => {
-    const newSelected = selected.includes(opt) 
-      ? selected.filter(s => s !== opt) 
-      : [...selected, opt];
-    onChange(newSelected);
-  };
-
-  return (
-    <div className="relative" ref={ref}>
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${selected.length > 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-      >
-        <Filter className="w-3 h-3"/>
-        {label} {selected.length > 0 && `(${selected.length})`}
-        <ChevronDown className="w-3 h-3 opacity-50"/>
-      </button>
-
-      {isOpen && (
-        <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 max-h-60 overflow-y-auto">
-          <div className="mb-2 pb-2 border-b border-slate-100 flex justify-between">
-            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange([])}>Clear</button>
-            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange(options)}>Select All</button>
-          </div>
-          {options.map(opt => (
-            <label key={opt} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 cursor-pointer text-xs rounded select-none">
-              <input 
-                type="checkbox" 
-                checked={selected.includes(opt)} 
-                onChange={() => toggleOption(opt)}
-                className="rounded text-blue-600 focus:ring-0 w-3 h-3 border-slate-300"
-              />
-              <span className="truncate text-slate-700">{opt}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+// Fix for 1-day offset: Get local YYYY-MM-DD string
+const getLocalDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 };
 
 // --- HELPER: Filter Header (For Table) ---
@@ -156,7 +112,59 @@ const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterV
   );
 };
 
-// --- COMPONENT: Task Table (Defined OUTSIDE TaskBoard to fix focus bug) ---
+// --- HELPER: Multi-Select Toolbar (For Calendar) ---
+const MultiSelectToolbar = ({ label, options, selected = [], onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => { if (ref.current && !ref.current.contains(event.target)) setIsOpen(false); };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (opt) => {
+    const newSelected = selected.includes(opt) 
+      ? selected.filter(s => s !== opt) 
+      : [...selected, opt];
+    onChange(newSelected);
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${selected.length > 0 ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+      >
+        <Filter className="w-3 h-3"/>
+        {label} {selected.length > 0 && `(${selected.length})`}
+        <ChevronDown className="w-3 h-3 opacity-50"/>
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full right-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 max-h-60 overflow-y-auto">
+          <div className="mb-2 pb-2 border-b border-slate-100 flex justify-between">
+            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange([])}>Clear</button>
+            <button className="text-[10px] text-blue-600 hover:underline" onClick={() => onChange(options)}>Select All</button>
+          </div>
+          {options.map(opt => (
+            <label key={opt} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 cursor-pointer text-xs rounded select-none">
+              <input 
+                type="checkbox" 
+                checked={selected.includes(opt)} 
+                onChange={() => toggleOption(opt)}
+                className="rounded text-blue-600 focus:ring-0 w-3 h-3 border-slate-300"
+              />
+              <span className="truncate text-slate-700">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- COMPONENT: Task Table ---
 const TaskTable = ({ data, sort, filters, handleSort, handleFilter, crud, setEditingTask, setIsModalOpen, usersList, vendors, clients }) => {
   return (
       <table className="w-full text-sm text-left border-collapse">
@@ -445,7 +453,10 @@ export default function TaskBoard() {
   const handleDrop = (e, date) => {
       e.preventDefault();
       const taskId = e.dataTransfer.getData('taskId');
-      if (taskId && date) crud.update(taskId, { dueDate: date.toISOString().split('T')[0] });
+      if (taskId && date) {
+          // Use LOCAL date string
+          crud.update(taskId, { dueDate: getLocalDateString(date) });
+      }
   };
 
   // --- 5. RENDERERS ---
@@ -455,6 +466,7 @@ export default function TaskBoard() {
 
     return (
         <div className="bg-white rounded-lg border border-slate-200 shadow-sm h-full flex flex-col overflow-hidden">
+            {/* Header Toolbar */}
             <div className="p-4 border-b border-slate-100 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-4">
                     <h3 className="font-bold text-lg text-slate-800">
@@ -465,7 +477,7 @@ export default function TaskBoard() {
                         <button onClick={()=>setViewMode('week')} className={`px-3 py-1 rounded ${viewMode==='week'?'bg-white shadow text-blue-600':'text-slate-500'}`}>Week</button>
                     </div>
                 </div>
-                {/* MULTI-SELECT CALENDAR FILTER BAR */}
+                {/* FILTERS */}
                 <div className="flex gap-2">
                     <MultiSelectToolbar 
                         label="Category" 
@@ -491,23 +503,27 @@ export default function TaskBoard() {
                 {weekDays.map(d => <div key={d} className="p-2 text-center text-xs font-bold text-slate-400 uppercase tracking-wider">{d}</div>)}
             </div>
             
-            {/* Calendar Grid - Auto Rows for height expansion */}
-            <div className="grid grid-cols-7 flex-1 overflow-y-auto bg-white auto-rows-auto">
+            {/* Calendar Grid - Auto Rows */}
+            <div className="grid grid-cols-7 flex-1 overflow-y-auto bg-white auto-rows-max"> 
                 {days.map((day, i) => {
-                    if(!day) return <div key={i} className="bg-slate-50/50 border-r border-b border-slate-100"></div>;
-                    const dateStr = day.toISOString().split('T')[0];
+                    if(!day) return <div key={i} className="bg-slate-50/30 border-r border-b border-slate-100"></div>;
+                    
+                    const dateStr = getLocalDateString(day);
                     const dayTasks = processedTasks.filter(t => t.dueDate === dateStr);
-                    const isToday = new Date().toDateString() === day.toDateString();
+                    const isToday = getLocalDateString(new Date()) === dateStr;
 
                     return (
                         <div 
                             key={i} 
-                            className="border-r border-b border-slate-100 p-1 relative hover:bg-slate-50 group min-h-[120px] transition-colors"
+                            className="border-r border-b border-slate-100 p-1 relative hover:bg-slate-50/50 group min-h-[140px] flex flex-col"
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => handleDrop(e, day)}
                         >
-                            <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>{day.getDate()}</div>
-                            <div className="space-y-1">
+                            <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${isToday ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>
+                                {day.getDate()}
+                            </div>
+
+                            <div className="flex-1 flex flex-col gap-1 min-h-0">
                                 {dayTasks.map(t => {
                                     const colorClass = getAssigneeColor(t.assignee);
                                     const secondaryName = t.secondaryClientId ? clients.find(c=>c.id===t.secondaryClientId)?.companyName : t.secondaryVendorId ? vendors.find(v=>v.id===t.secondaryVendorId)?.companyName : null;
@@ -518,7 +534,7 @@ export default function TaskBoard() {
                                             draggable
                                             onDragStart={(e) => handleDragStart(e, t.id)}
                                             onClick={() => { setEditingTask(t); setIsModalOpen(true); }}
-                                            className={`text-[10px] p-1.5 rounded border cursor-grab active:cursor-grabbing shadow-sm bg-white hover:border-blue-300 transition-all ${t.status==='Completed'?'opacity-50':''}`}
+                                            className={`text-[10px] p-1.5 rounded border cursor-grab active:cursor-grabbing shadow-sm hover:brightness-95 transition-all ${colorClass} ${t.status==='Completed'?'opacity-50 grayscale':''}`}
                                         >
                                             <div className="flex items-start gap-1.5 mb-1">
                                                 <input 
@@ -526,19 +542,19 @@ export default function TaskBoard() {
                                                     checked={t.status === 'Completed'} 
                                                     onClick={(e) => e.stopPropagation()}
                                                     onChange={(e) => crud.update(t.id, {status: e.target.checked ? 'Completed' : 'Pending'})}
-                                                    className="mt-0.5 w-3 h-3 rounded border-slate-300 cursor-pointer"
+                                                    className="mt-0.5 w-3 h-3 rounded border-current opacity-60 cursor-pointer mix-blend-multiply"
                                                 />
-                                                <div className={`leading-tight font-medium flex-1 ${t.status==='Completed'?'line-through text-slate-400':'text-slate-800'}`}>{t.title}</div>
+                                                <div className="leading-tight font-bold flex-1 break-words">{t.title}</div>
                                             </div>
                                             
-                                            <div className="flex justify-between items-end mt-1">
+                                            <div className="flex justify-between items-end mt-1 pt-1 border-t border-black/5">
                                                 <div className="flex flex-col max-w-[75%]">
-                                                    <span className="text-[9px] text-slate-500 font-medium truncate">
+                                                    <span className="text-[9px] font-medium truncate opacity-90">
                                                         {t.contextType === 'Internal' ? t.taskGroup : t.relatedName}
                                                     </span>
-                                                    {secondaryName && <span className="text-[8px] text-slate-400 truncate">+ {secondaryName}</span>}
+                                                    {secondaryName && <span className="text-[8px] truncate opacity-70">+ {secondaryName}</span>}
                                                 </div>
-                                                <div className={`w-5 h-5 flex items-center justify-center rounded-full text-[9px] font-bold border ${colorClass}`}>
+                                                <div className="text-[9px] font-extrabold opacity-70">
                                                     {getInitials(t.assignee)}
                                                 </div>
                                             </div>
@@ -546,7 +562,8 @@ export default function TaskBoard() {
                                     );
                                 })}
                             </div>
-                            <button onClick={() => { setEditingTask({ dueDate: dateStr }); setIsModalOpen(true); }} className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 p-1 bg-white shadow-sm border rounded text-blue-600 hover:bg-blue-50"><Plus className="w-3 h-3"/></button>
+                            
+                            <button onClick={() => { setEditingTask({ dueDate: dateStr }); setIsModalOpen(true); }} className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-blue-600 shadow-md rounded-full text-white hover:bg-blue-700 transition-all z-10"><Plus className="w-3 h-3"/></button>
                         </div>
                     );
                 })}
