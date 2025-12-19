@@ -40,7 +40,7 @@ const getLocalDateString = (date) => {
     return `${year}-${month}-${day}`;
 };
 
-// --- HELPER: Filter Header (For Table) ---
+// --- HELPER: Filter Header ---
 const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterValue, onFilter, options }) => {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
@@ -112,7 +112,7 @@ const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterV
   );
 };
 
-// --- HELPER: Multi-Select Toolbar (For Calendar) ---
+// --- HELPER: Multi-Select Toolbar ---
 const MultiSelectToolbar = ({ label, options, selected = [], onChange }) => {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
