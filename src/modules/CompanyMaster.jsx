@@ -3,7 +3,7 @@ import { collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp } from 
 import { db, APP_ID } from "../lib/firebase";
 import { Button, Badge } from "../components/UI";
 import { 
-  Factory, Users, Plus, Globe, MoreVertical, ChevronDown, ArrowUp, ArrowDown, Calendar, CheckSquare 
+  Factory, Users, Plus, MoreVertical, ChevronDown, ArrowUp, ArrowDown 
 } from "lucide-react";
 import DetailPanel from "./DetailPanel";
 
@@ -106,17 +106,19 @@ export default function CompanyMaster({ type }) {
   const [formData, setFormData] = useState({});
   const [detailView, setDetailView] = useState({ open: false, data: null });
 
-  // --- 1. LOAD ALL DATA (Needed for Derived Columns) ---
+  // --- 1. LOAD ALL DATA ---
   useEffect(() => {
     const path = `artifacts/${APP_ID}/public/data`;
-    const quoteCol = isVendor ? 'quotesReceived' : 'quotesSent'; // Vendors -> Purchase Quotes, Clients -> Sales Quotes
+    const quoteCol = isVendor ? 'quotesReceived' : 'quotesSent';
 
     const subs = [
       onSnapshot(collection(db, path, collectionName), (s) => setData(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, path, 'settings'), (s) => {
         const temp = {};
         s.docs.forEach(d => temp[d.id] = d.data().list || []);
-        if(!temp.leadStatuses) temp.leadStatuses = ['Lead','Active','Negotiation','Churned']; // Fallback
+        if(!temp.leadStatuses) temp.leadStatuses = ['Lead','Active','Negotiation','Churned'];
+        if(!temp.formats) temp.formats = ['Powder', 'Liquid', 'Gummy'];
+        if(!temp.leadSources) temp.leadSources = ['LinkedIn', 'Website'];
         setSettings(prev => ({...prev, ...temp}));
       }),
       onSnapshot(collection(db, path, 'tasks'), (s) => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))),
@@ -142,34 +144,28 @@ export default function CompanyMaster({ type }) {
   // --- 3. DERIVED DATA LOGIC ---
   const enrichedData = useMemo(() => {
     return data.map(item => {
-      // 1. Rollup Open Tasks
       const openTasks = tasks.filter(t => 
         (t.relatedId === item.id || t.relatedClientId === item.id || t.relatedVendorId === item.id) 
         && t.status !== 'Completed'
       );
 
-      // 2. Derive Products & Formats from Quotes
       const itemQuotes = quotes.filter(q => isVendor ? q.vendorId === item.id : q.clientId === item.id);
-      
       const involvedSkuIds = [...new Set(itemQuotes.map(q => q.skuId))];
       const involvedSkus = skus.filter(s => involvedSkuIds.includes(s.id));
       const involvedProductIds = [...new Set(involvedSkus.map(s => s.productId))];
       
-      // Get Product Names
       const productList = products
         .filter(p => involvedProductIds.includes(p.id))
         .map(p => p.name);
 
-      // Get Formats (Vendor: Derived from Quotes | Client: From Form + Quotes)
       const derivedFormats = products
         .filter(p => involvedProductIds.includes(p.id))
         .map(p => p.format);
       
       const displayFormats = isVendor 
-        ? [...new Set(derivedFormats)] // Vendors show what they SUPPLY
-        : [...new Set([...(item.productFormats || []), ...derivedFormats])]; // Clients show Interest + What they bought
+        ? [...new Set(derivedFormats)] 
+        : [...new Set([...(item.productFormats || []), ...derivedFormats])]; 
 
-      // 3. Calculate Sales Potential (Clients Only)
       const potential = !isVendor ? itemQuotes.reduce((acc, q) => acc + (q.sellingPrice * q.moq), 0) : 0;
 
       return {
@@ -189,23 +185,17 @@ export default function CompanyMaster({ type }) {
       if (filters.companyName && !item.companyName?.toLowerCase().includes(filters.companyName.toLowerCase())) return false;
       if (filters.status.length > 0 && !filters.status.includes(item.status)) return false;
       if (filters.leadSource.length > 0 && !filters.leadSource.includes(item.leadSource)) return false;
-      
-      // Filter by Formats
       if (filters.formats.length > 0) {
          if (!item.derivedFormats.some(f => filters.formats.includes(f))) return false;
       }
-
-      // Filter by Product List
       if (filters.productList) {
           if (!item.derivedProductList.some(p => p.toLowerCase().includes(filters.productList.toLowerCase()))) return false;
       }
-
       return true;
     }).sort((a,b) => {
       let valA = a[sort.key];
       let valB = b[sort.key];
 
-      // Handle specific sort keys
       if(sort.key === 'salesPotential' || sort.key === 'openTaskCount') {
           valA = valA || 0;
           valB = valB || 0;
@@ -221,9 +211,11 @@ export default function CompanyMaster({ type }) {
   const handleFilterChange = (key, val) => setFilters(prev => ({ ...prev, [key]: val }));
   const handleSort = (key) => setSort(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
 
+  // --- FIX: Use Settings for Filter Dropdown ---
+  const statusOptions = isVendor ? [] : (settings.leadStatuses && settings.leadStatuses.length > 0 ? settings.leadStatuses : ['Lead', 'Active', 'Negotiation', 'Churned']);
+
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* TOOLBAR */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
         <div className="flex items-center gap-3">
           <div className={`p-2 rounded-lg ${isVendor ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
@@ -234,7 +226,6 @@ export default function CompanyMaster({ type }) {
         <Button icon={Plus} onClick={() => { setFormData({ productFormats: [] }); setIsModalOpen(true); }}>New {isVendor ? 'Vendor' : 'Client'}</Button>
       </div>
 
-      {/* TABLE */}
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm h-[calc(100vh-220px)] flex flex-col">
         <div className="overflow-auto scroller flex-1">
           <table className="w-full text-sm text-left border-collapse">
@@ -243,34 +234,24 @@ export default function CompanyMaster({ type }) {
                 <th className="px-4 py-3 min-w-[200px] align-top">
                   <FilterHeader label="Company Name" sortKey="companyName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.companyName} onFilter={v => handleFilterChange('companyName', v)} />
                 </th>
-                
-                {/* STATUS (Clients Only) */}
                 {!isVendor && (
                   <th className="px-4 py-3 min-w-[130px] align-top">
-                    <FilterHeader label="Status" sortKey="status" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.status} onFilter={v => handleFilterChange('status', v)} options={settings.leadStatuses} />
+                    <FilterHeader label="Status" sortKey="status" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.status} onFilter={v => handleFilterChange('status', v)} options={statusOptions} />
                   </th>
                 )}
-
-                {/* PRODUCT FORMATS (Both) */}
                 <th className="px-4 py-3 min-w-[150px] align-top">
                   <FilterHeader label={isVendor ? "Supplied Formats" : "Format Interest"} sortKey="derivedFormats" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.formats} onFilter={v => handleFilterChange('formats', v)} options={settings.formats} />
                 </th>
-
-                {/* PRODUCT LIST (Clients Only) */}
                 {!isVendor && (
                    <th className="px-4 py-3 min-w-[180px] align-top">
                       <FilterHeader label="Pitched Products" sortKey="derivedProductList" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.productList} onFilter={v => handleFilterChange('productList', v)} />
                    </th>
                 )}
-
-                {/* LEAD SOURCE (Clients Only) */}
                 {!isVendor && (
                   <th className="px-4 py-3 min-w-[130px] align-top">
                     <FilterHeader label="Source" sortKey="leadSource" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.leadSource} onFilter={v => handleFilterChange('leadSource', v)} options={settings.leadSources} />
                   </th>
                 )}
-
-                {/* LEAD DATE (Clients Only) */}
                 {!isVendor && (
                    <th className="px-4 py-3 min-w-[100px] align-top">
                       <div className="flex items-center gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('leadDate')}>
@@ -279,16 +260,12 @@ export default function CompanyMaster({ type }) {
                       </div>
                    </th>
                 )}
-
-                {/* OPEN TASKS (Both) */}
                 <th className="px-4 py-3 min-w-[120px] align-top">
                    <div className="flex items-center gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('openTaskCount')}>
                       <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tasks</span>
                       {sort.key === 'openTaskCount' && <span className="text-[10px] text-blue-500">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
                    </div>
                 </th>
-
-                {/* SALES POTENTIAL (Clients Only) */}
                 {!isVendor && (
                    <th className="px-4 py-3 min-w-[120px] align-top text-right">
                       <div className="flex items-center justify-end gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('salesPotential')}>
@@ -297,7 +274,6 @@ export default function CompanyMaster({ type }) {
                       </div>
                    </th>
                 )}
-                
                 <th className="px-4 py-3 align-top w-10"></th>
               </tr>
             </thead>
@@ -310,20 +286,17 @@ export default function CompanyMaster({ type }) {
                     </div>
                     {item.companyName}
                   </td>
-
                   {!isVendor && (
                     <td className="px-4 py-3">
                         <Badge color={['Active','Hot Lead'].includes(item.status)?'green':['Blacklisted','Churned'].includes(item.status)?'red':'blue'}>{item.status}</Badge>
                     </td>
                   )}
-
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {item.derivedFormats.slice(0, 2).map(f => <span key={f} className="px-1.5 py-0.5 bg-slate-100 border rounded text-[10px] text-slate-600">{f}</span>)}
                       {item.derivedFormats.length > 2 && <span className="text-[10px] text-slate-400">+{item.derivedFormats.length - 2}</span>}
                     </div>
                   </td>
-
                   {!isVendor && (
                     <>
                         <td className="px-4 py-3">
@@ -336,7 +309,6 @@ export default function CompanyMaster({ type }) {
                         <td className="px-4 py-3 text-slate-500 font-mono text-xs">{formatDate(item.leadDate)}</td>
                     </>
                   )}
-
                   <td className="px-4 py-3">
                      {item.openTaskCount > 0 ? (
                         <div className="flex items-center gap-2">
@@ -345,11 +317,9 @@ export default function CompanyMaster({ type }) {
                         </div>
                      ) : <span className="text-slate-300 text-xs">-</span>}
                   </td>
-
                   {!isVendor && (
                       <td className="px-4 py-3 text-right font-medium text-slate-700">{formatMoney(item.salesPotential)}</td>
                   )}
-
                   <td className="px-4 py-3 text-right">
                     <button onClick={(e) => { e.stopPropagation(); setFormData(item); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1 opacity-0 group-hover:opacity-100"><MoreVertical className="w-4 h-4" /></button>
                   </td>
@@ -360,10 +330,8 @@ export default function CompanyMaster({ type }) {
         </div>
       </div>
 
-      {/* DETAIL PANEL */}
       {detailView.open && <DetailPanel type={type} data={detailView.data} onClose={() => setDetailView({ open: false, data: null })} />}
 
-      {/* CREATE / EDIT MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
@@ -376,7 +344,6 @@ export default function CompanyMaster({ type }) {
               </div>
               <input placeholder="Drive Folder Link" className="w-full p-2 border rounded" value={formData.driveLink||''} onChange={e=>setFormData({...formData, driveLink:e.target.value})}/>
               
-              {/* CLIENT SPECIFIC FIELDS */}
               {!isVendor && (
                 <>
                   <div className="border-t pt-4">
@@ -384,7 +351,7 @@ export default function CompanyMaster({ type }) {
                     <div className="grid grid-cols-2 gap-4 mb-4">
                         <select className="p-2 border rounded w-full" value={formData.status||''} onChange={e=>setFormData({...formData, status:e.target.value})}>
                             <option value="">Select Status...</option>
-                            {(settings.leadStatuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+                            {(statusOptions).map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                         <select className="p-2 border rounded w-full" value={formData.leadSource||''} onChange={e=>setFormData({...formData, leadSource:e.target.value})}>
                             <option value="">Select Source...</option>

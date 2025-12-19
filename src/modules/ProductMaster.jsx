@@ -4,11 +4,11 @@ import { db, APP_ID } from "../lib/firebase";
 import { Button, Badge } from "../components/UI";
 import { Plus, Search, Package, Edit, Trash2, ChevronRight, ChevronDown } from "lucide-react";
 
-// --- SKU MODAL (Fixes Defaults & Code Generation) ---
+// --- SKU MODAL ---
 const SKUModal = ({ isOpen, onClose, product, initialData, settings }) => {
   if (!isOpen) return null;
   
-  // Default packType to the first option in the list or "Jar"
+  // FIX: Default packType to the first option (e.g., "Jar") or fallback
   const defaultPackType = settings.packTypes?.[0] || "Jar";
   const defaultUnit = settings.units?.[0] || "kg";
 
@@ -16,19 +16,19 @@ const SKUModal = ({ isOpen, onClose, product, initialData, settings }) => {
       variant: '', 
       packSize: '', 
       unit: defaultUnit, 
-      packType: defaultPackType, // <--- FIX: Initialize with default
+      packType: defaultPackType, 
       flavour: '' 
   });
 
-  // Auto-generate Code
+  // FIX: Auto-generate Code (No Truncation)
   useEffect(() => {
       if(!initialData) {
-          // Logic: PROD_SIZEunit_TYPE_FLAVOUR (e.g., ASH_60pcs_JAR_MINT)
-          const pName = product?.name?.substring(0,3).toUpperCase() || 'XXX';
+          // Logic: NAME_SIZEunit_TYPE_FLAVOUR (e.g. ASHWA_60pcs_JAR_MINT)
+          const pName = product?.name?.toUpperCase().replace(/\s+/g, '') || 'PROD';
           const size = form.packSize || '0';
           const unit = form.unit || '';
-          const type = (form.packType || defaultPackType).toUpperCase().substring(0,3);
-          const flav = form.flavour ? `_${form.flavour.toUpperCase().substring(0,3)}` : '';
+          const type = (form.packType || defaultPackType).toUpperCase();
+          const flav = form.flavour ? `_${form.flavour.toUpperCase()}` : '';
           
           setForm(f => ({ ...f, name: `${pName}_${size}${unit}_${type}${flav}` }));
       }
@@ -49,11 +49,13 @@ const SKUModal = ({ isOpen, onClose, product, initialData, settings }) => {
            <input placeholder="Variant Name (e.g. Sugar Free)" className="w-full p-2 border rounded" value={form.variant||''} onChange={e=>setForm({...form, variant:e.target.value})} autoFocus />
            <div className="grid grid-cols-2 gap-2">
                <input type="number" placeholder="Size" className="p-2 border rounded" value={form.packSize||''} onChange={e=>setForm({...form, packSize:e.target.value})} />
+               {/* FIX: Admin Defined Units */}
                <select className="p-2 border rounded" value={form.unit||''} onChange={e=>setForm({...form, unit:e.target.value})}>
                    {(settings.units || ['kg', 'g', 'pcs', 'lbs']).map(u => <option key={u} value={u}>{u}</option>)}
                </select>
            </div>
            <div className="grid grid-cols-2 gap-2">
+               {/* FIX: Admin Defined Pack Types */}
                <select className="p-2 border rounded" value={form.packType||''} onChange={e=>setForm({...form, packType:e.target.value})}>
                    {(settings.packTypes || ['Jar', 'Box', 'Pouch', 'Bottle']).map(t => <option key={t} value={t}>{t}</option>)}
                </select>
@@ -74,7 +76,7 @@ const SKUModal = ({ isOpen, onClose, product, initialData, settings }) => {
 export default function ProductMaster() {
   const [products, setProducts] = useState([]);
   const [skus, setSkus] = useState([]);
-  const [settings, setSettings] = useState({}); // <--- Store Admin Settings
+  const [settings, setSettings] = useState({}); 
   
   const [expandedProduct, setExpandedProduct] = useState(null);
   const [search, setSearch] = useState("");
@@ -83,7 +85,7 @@ export default function ProductMaster() {
 
   const [skuModal, setSkuModal] = useState({ open: false, product: null, data: null });
 
-  // Load Data & Settings
+  // Load Data
   useEffect(() => {
     const path = `artifacts/${APP_ID}/public/data`;
     const unsubs = [
@@ -235,7 +237,7 @@ export default function ProductMaster() {
         onClose={()=>setSkuModal({open:false, product:null, data:null})} 
         product={skuModal.product} 
         initialData={skuModal.data}
-        settings={settings} // <--- Pass settings to modal
+        settings={settings}
       />
     </div>
   );
