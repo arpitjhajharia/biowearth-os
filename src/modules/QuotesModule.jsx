@@ -1,21 +1,102 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { db, APP_ID } from "../lib/firebase";
 import { Button, Badge } from "../components/UI";
 import { 
-  Wallet, Plus, Search, FileText, ArrowRight, ExternalLink, 
-  Trash2, Edit, TrendingUp, AlertCircle 
+  Plus, Search, ArrowUp, ArrowDown, ChevronDown, Edit, Trash2, FileText, ExternalLink 
 } from "lucide-react";
+
+// --- HELPER: Filter Header ---
+const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterValue, onFilter, options }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => { if (ref.current && !ref.current.contains(event.target)) setIsOpen(false); };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleMultiSelect = (option) => {
+    const current = Array.isArray(filterValue) ? filterValue : [];
+    const updated = current.includes(option) ? current.filter(i => i !== option) : [...current, option];
+    onFilter(updated);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1 cursor-pointer hover:text-blue-600 group select-none" onClick={() => onSort(sortKey)}>
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{label}</span>
+        <span className="text-[10px] text-slate-300 group-hover:text-blue-500">
+          {currentSort.key === sortKey ? (currentSort.dir === 'asc' ? <ArrowUp className="w-3 h-3"/> : <ArrowDown className="w-3 h-3"/>) : <ArrowDown className="w-3 h-3 opacity-0 group-hover:opacity-50"/>}
+        </span>
+      </div>
+      
+      {filterType === 'text' && (
+        <input 
+          className="w-full text-xs p-1 border border-slate-200 rounded font-normal focus:ring-1 focus:ring-blue-200 outline-none" 
+          placeholder={`Filter...`}
+          value={filterValue || ''} 
+          onChange={e => onFilter(e.target.value)}
+          onClick={e => e.stopPropagation()}
+        />
+      )}
+
+      {filterType === 'multi-select' && (
+        <div className="relative" ref={ref}>
+          <div 
+            className="w-full text-xs p-1 border border-slate-200 rounded font-normal bg-white cursor-pointer flex justify-between items-center"
+            onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
+          >
+            <span className="truncate text-slate-600">
+              {(!filterValue || filterValue.length === 0) ? 'All' : `${filterValue.length} selected`}
+            </span>
+            <ChevronDown className="w-3 h-3 text-slate-400"/>
+          </div>
+          {isOpen && (
+            <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 p-2 max-h-60 overflow-y-auto">
+              <div className="mb-2 pb-2 border-b border-slate-100 flex justify-between">
+                <button className="text-[10px] text-blue-600 hover:underline" onClick={()=>onFilter([])}>Clear</button>
+                <button className="text-[10px] text-blue-600 hover:underline" onClick={()=>onFilter(options)}>Select All</button>
+              </div>
+              {options.map(opt => (
+                <label key={opt} className="flex items-center gap-2 p-1.5 hover:bg-slate-50 cursor-pointer text-xs rounded">
+                  <input 
+                    type="checkbox" 
+                    checked={(filterValue || []).includes(opt)} 
+                    onChange={() => handleMultiSelect(opt)}
+                    className="rounded text-blue-600 focus:ring-0 w-3 h-3 border-slate-300"
+                  />
+                  <span className="truncate text-slate-700">{opt}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function QuotesModule() {
   const [view, setView] = useState('sales'); // 'sales' or 'purchase'
-  const [search, setSearch] = useState("");
   
+  // Data
   const [quotesReceived, setQuotesReceived] = useState([]);
   const [quotesSent, setQuotesSent] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [clients, setClients] = useState([]);
   const [skus, setSkus] = useState([]);
+
+  // Sorting & Filtering State
+  const [sort, setSort] = useState({ key: 'createdAt', dir: 'desc' });
+  const [filters, setFilters] = useState({
+    clientName: '',
+    vendorName: '',
+    skuName: '',
+    status: [],
+    quoteId: ''
+  });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({});
@@ -48,7 +129,6 @@ export default function QuotesModule() {
     return [];
   }, [view, formData.skuId, quotesReceived]);
 
-  // Auto-calculate margin in form
   const formStats = useMemo(() => {
     if (view === 'sales') {
       const revenue = (formData.sellingPrice || 0) * (formData.moq || 0);
@@ -58,66 +138,157 @@ export default function QuotesModule() {
     return {};
   }, [formData, view]);
 
+  const handleSort = (key) => setSort(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
+  const handleFilter = (key, val) => setFilters(prev => ({ ...prev, [key]: val }));
+
+  // --- FILTERED DATA LOGIC ---
+  const filteredData = useMemo(() => {
+    const rawData = view === 'sales' ? quotesSent : quotesReceived;
+    
+    return rawData.map(q => {
+        // Enrich data for filtering/sorting
+        const client = view === 'sales' ? clients.find(c => c.id === q.clientId) : null;
+        const vendor = view === 'purchase' ? vendors.find(v => v.id === q.vendorId) : null;
+        const sku = skus.find(s => s.id === q.skuId);
+        
+        // Calcs for Sales
+        const totalValue = view === 'sales' ? (q.sellingPrice * q.moq) : (q.price * q.moq);
+        const marginAmt = view === 'sales' ? (totalValue - ((q.baseCostPrice||0) * q.moq)) : 0;
+        const marginPct = view === 'sales' && q.baseCostPrice ? ((q.sellingPrice - q.baseCostPrice)/q.baseCostPrice)*100 : 0;
+
+        return {
+            ...q,
+            clientName: client?.companyName || '',
+            vendorName: vendor?.companyName || '',
+            skuName: sku?.name || '',
+            totalValue,
+            marginAmt,
+            marginPct
+        };
+    }).filter(item => {
+        if(filters.quoteId && !item.quoteId?.toLowerCase().includes(filters.quoteId.toLowerCase())) return false;
+        if(filters.skuName && !item.skuName?.toLowerCase().includes(filters.skuName.toLowerCase())) return false;
+        
+        if(view === 'sales') {
+            if(filters.clientName && !item.clientName?.toLowerCase().includes(filters.clientName.toLowerCase())) return false;
+            if(filters.status.length > 0 && !filters.status.includes(item.status)) return false;
+        } else {
+            if(filters.vendorName && !item.vendorName?.toLowerCase().includes(filters.vendorName.toLowerCase())) return false;
+        }
+        return true;
+    }).sort((a,b) => {
+        let valA = a[sort.key];
+        let valB = b[sort.key];
+        
+        // String sort
+        if(typeof valA === 'string') {
+            valA = valA.toLowerCase();
+            valB = (valB || '').toLowerCase();
+            return sort.dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        }
+        // Number sort
+        return sort.dir === 'asc' ? valA - valB : valB - valA;
+    });
+  }, [quotesSent, quotesReceived, view, filters, sort, clients, vendors, skus]);
+
   const renderPurchaseTable = () => (
-    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm animate-fade-in">
-      <table className="w-full text-sm text-left">
-        <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold">
-          <tr><th className="px-4 py-3">Quote ID</th><th className="px-4 py-3">Vendor</th><th className="px-4 py-3">SKU</th><th className="px-4 py-3 text-right">Unit Price</th><th className="px-4 py-3 text-right">MOQ</th><th className="px-4 py-3 text-right">Total</th><th className="px-4 py-3 text-right">Action</th></tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {quotesReceived.filter(q => q.quoteId?.toLowerCase().includes(search.toLowerCase())).map(q => {
-            const v = vendors.find(x => x.id === q.vendorId);
-            const s = skus.find(x => x.id === q.skuId);
-            return (
-              <tr key={q.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-mono text-xs font-bold text-slate-600">{q.quoteId}</td>
-                <td className="px-4 py-3 font-medium text-slate-800">{v?.companyName || 'Unknown'}</td>
-                <td className="px-4 py-3 text-slate-500 text-xs">{s?.name || 'Unknown SKU'}</td>
-                <td className="px-4 py-3 text-right text-slate-700">{formatMoney(q.price, q.currency)}</td>
-                <td className="px-4 py-3 text-right text-slate-500">{q.moq}</td>
-                <td className="px-4 py-3 text-right font-medium text-purple-700">{formatMoney(q.price * q.moq, q.currency)}</td>
-                <td className="px-4 py-3 text-right flex justify-end gap-2">
-                  <button onClick={() => { setFormData(q); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
-                  <button onClick={() => crud.del('quotesReceived', q.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm h-[calc(100vh-200px)] flex flex-col">
+      <div className="overflow-auto scroller flex-1">
+        <table className="w-full text-sm text-left border-collapse">
+            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+            <tr>
+                <th className="px-4 py-3 min-w-[100px]"><FilterHeader label="Quote ID" sortKey="quoteId" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.quoteId} onFilter={v=>handleFilter('quoteId',v)} /></th>
+                <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="Vendor" sortKey="vendorName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.vendorName} onFilter={v=>handleFilter('vendorName',v)} /></th>
+                <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="SKU" sortKey="skuName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.skuName} onFilter={v=>handleFilter('skuName',v)} /></th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('moq')}>MOQ {sort.key==='moq'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('price')}>Price {sort.key==='price'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('totalValue')}>Total {sort.key==='totalValue'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 text-center">Doc</th>
+                <th className="px-4 py-3 text-right w-20"></th>
+            </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+            {filteredData.map(q => (
+                <tr key={q.id} className="hover:bg-slate-50 group">
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-slate-600">{q.quoteId}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{q.vendorName}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{q.skuName}</td>
+                    <td className="px-4 py-3 text-right text-slate-500">{q.moq}</td>
+                    <td className="px-4 py-3 text-right text-slate-700">{formatMoney(q.price, q.currency)}</td>
+                    <td className="px-4 py-3 text-right font-medium text-purple-700">{formatMoney(q.totalValue, q.currency)}</td>
+                    <td className="px-4 py-3 text-center">
+                        {q.driveLink ? <a href={q.driveLink} target="_blank" className="text-blue-500 hover:text-blue-700 inline-block"><FileText className="w-4 h-4"/></a> : <span className="text-slate-300">-</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setFormData(q); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
+                        <button onClick={() => crud.del('quotesReceived', q.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                    </td>
+                </tr>
+            ))}
+            </tbody>
+        </table>
+      </div>
     </div>
   );
 
   const renderSalesTable = () => (
-    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm animate-fade-in">
-      <table className="w-full text-sm text-left">
-        <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold">
-          <tr><th className="px-4 py-3">Status</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">SKU</th><th className="px-4 py-3 text-right">Sell Price</th><th className="px-4 py-3 text-right">Margin</th><th className="px-4 py-3 text-right">Total Deal</th><th className="px-4 py-3 text-right">Action</th></tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {quotesSent.filter(q => q.quoteId?.toLowerCase().includes(search.toLowerCase())).map(q => {
-            const c = clients.find(x => x.id === q.clientId);
-            const s = skus.find(x => x.id === q.skuId);
-            const totalRevenue = q.sellingPrice * q.moq;
-            const totalCost = (q.baseCostPrice || 0) * q.moq;
-            const margin = totalRevenue - totalCost;
-            return (
-              <tr key={q.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3"><Badge color={q.status === 'Active' ? 'green' : 'slate'}>{q.status || 'Draft'}</Badge></td>
-                <td className="px-4 py-3 font-medium text-slate-800">{c?.companyName || 'Unknown'}</td>
-                <td className="px-4 py-3 text-slate-500 text-xs">{s?.name || 'Unknown SKU'}</td>
-                <td className="px-4 py-3 text-right text-slate-700">{formatMoney(q.sellingPrice)}</td>
-                <td className={`px-4 py-3 text-right font-bold ${margin > 0 ? 'text-green-600' : 'text-red-500'}`}>{formatMoney(margin)}</td>
-                <td className="px-4 py-3 text-right font-medium text-blue-700">{formatMoney(totalRevenue)}</td>
-                <td className="px-4 py-3 text-right flex justify-end gap-2">
-                  <button onClick={() => { setFormData(q); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
-                  <button onClick={() => crud.del('quotesSent', q.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm h-[calc(100vh-200px)] flex flex-col">
+      <div className="overflow-auto scroller flex-1">
+        <table className="w-full text-sm text-left border-collapse">
+            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+            <tr>
+                <th className="px-4 py-3 min-w-[100px]"><FilterHeader label="ID" sortKey="quoteId" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.quoteId} onFilter={v=>handleFilter('quoteId',v)} /></th>
+                <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="Client" sortKey="clientName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.clientName} onFilter={v=>handleFilter('clientName',v)} /></th>
+                <th className="px-4 py-3 min-w-[150px]"><FilterHeader label="SKU" sortKey="skuName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.skuName} onFilter={v=>handleFilter('skuName',v)} /></th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('sellingPrice')}>Rate (MOQ) {sort.key==='sellingPrice'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('totalValue')}>Total Sales {sort.key==='totalValue'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 min-w-[120px]"><FilterHeader label="Status" sortKey="status" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.status} onFilter={v=>handleFilter('status',v)} options={['Draft','Active','Closed','Lost']} /></th>
+                <th className="px-4 py-3 text-left">Base Cost Context</th>
+                <th className="px-4 py-3 text-right cursor-pointer hover:text-blue-600" onClick={()=>handleSort('marginAmt')}>Margin {sort.key==='marginAmt'&&(sort.dir==='asc'?'↑':'↓')}</th>
+                <th className="px-4 py-3 text-center">Doc</th>
+                <th className="px-4 py-3 text-right w-20"></th>
+            </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+            {filteredData.map(q => {
+                const baseQuote = quotesReceived.find(bq => bq.id === q.baseCostId);
+                const baseVendor = vendors.find(v => v.id === baseQuote?.vendorId);
+                
+                return (
+                    <tr key={q.id} className="hover:bg-slate-50 group">
+                        <td className="px-4 py-3 font-mono text-xs font-bold text-slate-600">{q.quoteId}</td>
+                        <td className="px-4 py-3 font-medium text-slate-800">{q.clientName}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs">{q.skuName}</td>
+                        <td className="px-4 py-3 text-right text-slate-700">
+                            <div>{formatMoney(q.sellingPrice)}</div>
+                            <div className="text-[10px] text-slate-400">({q.moq} u)</div>
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-blue-700">{formatMoney(q.totalValue)}</td>
+                        <td className="px-4 py-3"><Badge color={q.status === 'Active' ? 'green' : q.status === 'Closed' ? 'slate' : 'yellow'}>{q.status || 'Draft'}</Badge></td>
+                        <td className="px-4 py-3">
+                            {baseQuote ? (
+                                <div className="text-xs wrap-text text-slate-500">
+                                    <span className="font-medium text-slate-700">{baseVendor?.companyName || 'Unknown'}</span> @ {formatMoney(baseQuote.price)}
+                                </div>
+                            ) : <span className="text-xs text-red-300">No Base Link</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                            <div className={`text-sm font-bold ${q.marginAmt > 0 ? 'text-green-600' : 'text-red-600'}`}>{formatMoney(q.marginAmt)}</div>
+                            <div className={`text-[10px] ${q.marginAmt > 0 ? 'text-green-600' : 'text-red-600'}`}>({q.marginPct.toFixed(1)}%)</div>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                            {q.driveLink ? <a href={q.driveLink} target="_blank" className="text-blue-500 hover:text-blue-700 inline-block"><FileText className="w-4 h-4"/></a> : <span className="text-slate-300">-</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => { setFormData(q); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600"><Edit className="w-4 h-4"/></button>
+                            <button onClick={() => crud.del('quotesSent', q.id)} className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4"/></button>
+                        </td>
+                    </tr>
+                );
+            })}
+            </tbody>
+        </table>
+      </div>
     </div>
   );
 
@@ -129,7 +300,6 @@ export default function QuotesModule() {
           <button onClick={() => setView('purchase')} className={`px-4 py-2 text-sm font-medium rounded transition-all ${view==='purchase' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Purchase Quotes (In)</button>
         </div>
         <div className="flex items-center gap-2 w-full md:w-auto">
-          <div className="relative flex-1 md:flex-none"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4"/><input className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:ring-2 ring-blue-100 outline-none w-full md:w-64" placeholder="Search Quote ID..." value={search} onChange={e=>setSearch(e.target.value)}/></div>
           <Button icon={Plus} onClick={() => { setFormData({}); setIsModalOpen(true); }}>New Quote</Button>
         </div>
       </div>
