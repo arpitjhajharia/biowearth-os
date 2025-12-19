@@ -90,6 +90,7 @@ export default function ProductMaster() {
   const [expandedProduct, setExpandedProduct] = useState(null);
   const [search, setSearch] = useState("");
   const [filterFormat, setFilterFormat] = useState("All");
+  const [sort, setSort] = useState({ key: 'name', dir: 'asc' }); // <--- Added Sort State
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -132,8 +133,12 @@ export default function ProductMaster() {
       if (filterFormat !== 'All' && p.format !== filterFormat) return false;
       if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
-    }).sort((a,b) => a.name.localeCompare(b.name));
-  }, [products, search, filterFormat]);
+    }).sort((a,b) => {
+        const valA = (a[sort.key] || '').toLowerCase();
+        const valB = (b[sort.key] || '').toLowerCase();
+        return sort.dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+    });
+  }, [products, search, filterFormat, sort]);
 
   const formats = ['Powder','Liquid','Tablet','Capsule','Gummy','Sachet'];
   const units = ['g','kg','ml','L','pcs'];
@@ -154,6 +159,17 @@ export default function ProductMaster() {
               <option value="All">All Formats</option>
               {formats.map(f=><option key={f} value={f}>{f}</option>)}
             </select>
+          </div>
+          {/* SORT CONTROLS */}
+          <div className="flex items-center gap-1 border-l pl-4 ml-2">
+             <span className="text-xs text-slate-400">Sort:</span>
+             <select className="text-sm border-none bg-transparent focus:ring-0 font-medium text-slate-600 cursor-pointer" onChange={e=>setSort(p=>({...p, key: e.target.value}))}>
+                <option value="name">Name</option>
+                <option value="format">Format</option>
+             </select>
+             <button onClick={()=>setSort(p=>({...p, dir: p.dir==='asc'?'desc':'asc'}))} className="text-slate-400 hover:text-blue-600">
+                {sort.dir === 'asc' ? '↑' : '↓'}
+             </button>
           </div>
         </div>
         <Button icon={Plus} onClick={() => { setFormData({}); setModalType('product'); setIsModalOpen(true); }}>New Product</Button>
