@@ -1,13 +1,13 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { db, APP_ID } from "../lib/firebase";
 import { Button, Badge } from "../components/UI";
 import { 
-  Factory, Users, Plus, Search, Globe, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown 
+  Factory, Users, Plus, Globe, MoreVertical, ChevronDown, ArrowUp, ArrowDown, Calendar, CheckSquare 
 } from "lucide-react";
 import DetailPanel from "./DetailPanel";
 
-// --- HELPER: Filter Header Component ---
+// --- HELPER: Filter Header ---
 const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterValue, onFilter, options }) => {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
@@ -36,7 +36,7 @@ const FilterHeader = ({ label, sortKey, currentSort, onSort, filterType, filterV
       {filterType === 'text' && (
         <input 
           className="w-full text-xs p-1 border border-slate-200 rounded font-normal focus:ring-1 focus:ring-blue-200 outline-none" 
-          placeholder={`Filter ${label}...`}
+          placeholder={`Filter...`}
           value={filterValue || ''} 
           onChange={e => onFilter(e.target.value)}
           onClick={e => e.stopPropagation()}
@@ -83,17 +83,22 @@ export default function CompanyMaster({ type }) {
   const isVendor = type === 'vendor';
   const collectionName = isVendor ? 'vendors' : 'clients';
   
+  // Data State
   const [data, setData] = useState([]);
-  const [settings, setSettings] = useState({ leadSources: [], formats: [] });
-  
-  // Sorting & Filtering State
+  const [settings, setSettings] = useState({ leadSources: [], formats: [], leadStatuses: [] });
+  const [tasks, setTasks] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [skus, setSkus] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+
+  // Sorting & Filtering
   const [sort, setSort] = useState({ key: 'companyName', dir: 'asc' });
   const [filters, setFilters] = useState({
     companyName: '',
     status: [],
-    country: '',
     leadSource: [],
-    productFormats: []
+    formats: [],
+    productList: ''
   });
 
   // Modal State
@@ -101,66 +106,120 @@ export default function CompanyMaster({ type }) {
   const [formData, setFormData] = useState({});
   const [detailView, setDetailView] = useState({ open: false, data: null });
 
-  // --- 1. LOAD DATA ---
+  // --- 1. LOAD ALL DATA (Needed for Derived Columns) ---
   useEffect(() => {
     const path = `artifacts/${APP_ID}/public/data`;
+    const quoteCol = isVendor ? 'quotesReceived' : 'quotesSent'; // Vendors -> Purchase Quotes, Clients -> Sales Quotes
+
     const subs = [
       onSnapshot(collection(db, path, collectionName), (s) => setData(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, path, 'settings'), (s) => {
         const temp = {};
         s.docs.forEach(d => temp[d.id] = d.data().list || []);
-        // Set Defaults if missing
-        if(!temp.leadSources) temp.leadSources = ['LinkedIn', 'Website', 'Referral', 'Cold Call'];
-        if(!temp.formats) temp.formats = ['Powder', 'Liquid', 'Tablet', 'Capsule', 'Gummy', 'Sachet'];
+        if(!temp.leadStatuses) temp.leadStatuses = ['Lead','Active','Negotiation','Churned']; // Fallback
         setSettings(prev => ({...prev, ...temp}));
-      })
+      }),
+      onSnapshot(collection(db, path, 'tasks'), (s) => setTasks(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, path, 'products'), (s) => setProducts(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, path, 'skus'), (s) => setSkus(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, path, quoteCol), (s) => setQuotes(s.docs.map(d => ({ id: d.id, ...d.data() }))))
     ];
     return () => subs.forEach(u => u());
-  }, [collectionName]);
+  }, [collectionName, isVendor]);
 
-  // --- 2. CRUD HELPERS ---
+  // --- 2. HELPERS ---
   const crud = {
     add: (item) => addDoc(collection(db, `artifacts/${APP_ID}/public/data`, collectionName), { ...item, createdAt: serverTimestamp() }),
     update: (id, item) => updateDoc(doc(db, `artifacts/${APP_ID}/public/data`, collectionName, id), item),
   };
 
-  // --- 3. FILTER & SORT LOGIC ---
-  const filteredData = useMemo(() => {
-    return data.filter(item => {
-      // Text Filters
-      if (filters.companyName && !item.companyName?.toLowerCase().includes(filters.companyName.toLowerCase())) return false;
-      if (filters.country && !item.country?.toLowerCase().includes(filters.country.toLowerCase())) return false;
+  const formatMoney = (v) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v);
+  const formatDate = (dateStr) => {
+      if(!dateStr) return '-';
+      return new Date(dateStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+  };
+
+  // --- 3. DERIVED DATA LOGIC ---
+  const enrichedData = useMemo(() => {
+    return data.map(item => {
+      // 1. Rollup Open Tasks
+      const openTasks = tasks.filter(t => 
+        (t.relatedId === item.id || t.relatedClientId === item.id || t.relatedVendorId === item.id) 
+        && t.status !== 'Completed'
+      );
+
+      // 2. Derive Products & Formats from Quotes
+      const itemQuotes = quotes.filter(q => isVendor ? q.vendorId === item.id : q.clientId === item.id);
       
-      // Multi-Select Filters
+      const involvedSkuIds = [...new Set(itemQuotes.map(q => q.skuId))];
+      const involvedSkus = skus.filter(s => involvedSkuIds.includes(s.id));
+      const involvedProductIds = [...new Set(involvedSkus.map(s => s.productId))];
+      
+      // Get Product Names
+      const productList = products
+        .filter(p => involvedProductIds.includes(p.id))
+        .map(p => p.name);
+
+      // Get Formats (Vendor: Derived from Quotes | Client: From Form + Quotes)
+      const derivedFormats = products
+        .filter(p => involvedProductIds.includes(p.id))
+        .map(p => p.format);
+      
+      const displayFormats = isVendor 
+        ? [...new Set(derivedFormats)] // Vendors show what they SUPPLY
+        : [...new Set([...(item.productFormats || []), ...derivedFormats])]; // Clients show Interest + What they bought
+
+      // 3. Calculate Sales Potential (Clients Only)
+      const potential = !isVendor ? itemQuotes.reduce((acc, q) => acc + (q.sellingPrice * q.moq), 0) : 0;
+
+      return {
+        ...item,
+        openTaskCount: openTasks.length,
+        nextTask: openTasks.sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate))[0],
+        derivedProductList: productList,
+        derivedFormats: displayFormats,
+        salesPotential: potential
+      };
+    });
+  }, [data, tasks, quotes, skus, products, isVendor]);
+
+  // --- 4. FILTERING & SORTING ---
+  const filteredData = useMemo(() => {
+    return enrichedData.filter(item => {
+      if (filters.companyName && !item.companyName?.toLowerCase().includes(filters.companyName.toLowerCase())) return false;
       if (filters.status.length > 0 && !filters.status.includes(item.status)) return false;
       if (filters.leadSource.length > 0 && !filters.leadSource.includes(item.leadSource)) return false;
-      if (filters.productFormats.length > 0) {
-         // item.productFormats is array. Check if any selected format is present.
-         const itemFormats = item.productFormats || [];
-         const hasMatch = filters.productFormats.some(f => itemFormats.includes(f));
-         if (!hasMatch) return false;
+      
+      // Filter by Formats
+      if (filters.formats.length > 0) {
+         if (!item.derivedFormats.some(f => filters.formats.includes(f))) return false;
       }
+
+      // Filter by Product List
+      if (filters.productList) {
+          if (!item.derivedProductList.some(p => p.toLowerCase().includes(filters.productList.toLowerCase()))) return false;
+      }
+
       return true;
     }).sort((a,b) => {
-      const valA = (a[sort.key] || '').toString().toLowerCase();
-      const valB = (b[sort.key] || '').toString().toLowerCase();
+      let valA = a[sort.key];
+      let valB = b[sort.key];
+
+      // Handle specific sort keys
+      if(sort.key === 'salesPotential' || sort.key === 'openTaskCount') {
+          valA = valA || 0;
+          valB = valB || 0;
+          return sort.dir === 'asc' ? valA - valB : valB - valA;
+      }
+
+      valA = (valA || '').toString().toLowerCase();
+      valB = (valB || '').toString().toLowerCase();
       return sort.dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
     });
-  }, [data, filters, sort]);
+  }, [enrichedData, filters, sort]);
 
   const handleFilterChange = (key, val) => setFilters(prev => ({ ...prev, [key]: val }));
   const handleSort = (key) => setSort(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
-
-  const statusOptions = isVendor ? [] : ['Lead', 'Active', 'Negotiation', 'Churned', 'Hot Lead'];
-
-  // --- 4. RENDERERS ---
-  const StatusBadge = ({ status }) => {
-    let color = 'blue';
-    if (['Active', 'Hot Lead'].includes(status)) color = 'green';
-    if (['Blacklisted', 'Churned'].includes(status)) color = 'red';
-    if (['On Hold', 'Potential'].includes(status)) color = 'slate';
-    return <Badge color={color}>{status || 'Active'}</Badge>;
-  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -170,7 +229,7 @@ export default function CompanyMaster({ type }) {
           <div className={`p-2 rounded-lg ${isVendor ? 'bg-purple-100 text-purple-600' : 'bg-green-100 text-green-600'}`}>
             {isVendor ? <Factory className="w-5 h-5"/> : <Users className="w-5 h-5"/>}
           </div>
-          <h2 className="font-bold text-lg text-slate-800">{isVendor ? 'Vendor Directory' : 'Client List'}</h2>
+          <h2 className="font-bold text-lg text-slate-800">{isVendor ? 'Vendor Directory' : 'Client Directory'}</h2>
         </div>
         <Button icon={Plus} onClick={() => { setFormData({ productFormats: [] }); setIsModalOpen(true); }}>New {isVendor ? 'Vendor' : 'Client'}</Button>
       </div>
@@ -184,23 +243,62 @@ export default function CompanyMaster({ type }) {
                 <th className="px-4 py-3 min-w-[200px] align-top">
                   <FilterHeader label="Company Name" sortKey="companyName" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.companyName} onFilter={v => handleFilterChange('companyName', v)} />
                 </th>
+                
+                {/* STATUS (Clients Only) */}
                 {!isVendor && (
-                  <>
-                    <th className="px-4 py-3 min-w-[140px] align-top">
-                      <FilterHeader label="Status" sortKey="status" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.status} onFilter={v => handleFilterChange('status', v)} options={statusOptions} />
-                    </th>
-                    <th className="px-4 py-3 min-w-[140px] align-top">
-                      <FilterHeader label="Source" sortKey="leadSource" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.leadSource} onFilter={v => handleFilterChange('leadSource', v)} options={settings.leadSources} />
-                    </th>
-                    <th className="px-4 py-3 min-w-[140px] align-top">
-                      <FilterHeader label="Format Interest" sortKey="productFormats" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.productFormats} onFilter={v => handleFilterChange('productFormats', v)} options={settings.formats} />
-                    </th>
-                  </>
+                  <th className="px-4 py-3 min-w-[130px] align-top">
+                    <FilterHeader label="Status" sortKey="status" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.status} onFilter={v => handleFilterChange('status', v)} options={settings.leadStatuses} />
+                  </th>
                 )}
-                <th className="px-4 py-3 min-w-[120px] align-top">
-                  <FilterHeader label="Country" sortKey="country" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.country} onFilter={v => handleFilterChange('country', v)} />
+
+                {/* PRODUCT FORMATS (Both) */}
+                <th className="px-4 py-3 min-w-[150px] align-top">
+                  <FilterHeader label={isVendor ? "Supplied Formats" : "Format Interest"} sortKey="derivedFormats" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.formats} onFilter={v => handleFilterChange('formats', v)} options={settings.formats} />
                 </th>
-                <th className="px-4 py-3 align-top text-right w-20"></th>
+
+                {/* PRODUCT LIST (Clients Only) */}
+                {!isVendor && (
+                   <th className="px-4 py-3 min-w-[180px] align-top">
+                      <FilterHeader label="Pitched Products" sortKey="derivedProductList" currentSort={sort} onSort={handleSort} filterType="text" filterValue={filters.productList} onFilter={v => handleFilterChange('productList', v)} />
+                   </th>
+                )}
+
+                {/* LEAD SOURCE (Clients Only) */}
+                {!isVendor && (
+                  <th className="px-4 py-3 min-w-[130px] align-top">
+                    <FilterHeader label="Source" sortKey="leadSource" currentSort={sort} onSort={handleSort} filterType="multi-select" filterValue={filters.leadSource} onFilter={v => handleFilterChange('leadSource', v)} options={settings.leadSources} />
+                  </th>
+                )}
+
+                {/* LEAD DATE (Clients Only) */}
+                {!isVendor && (
+                   <th className="px-4 py-3 min-w-[100px] align-top">
+                      <div className="flex items-center gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('leadDate')}>
+                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Lead Date</span>
+                        {sort.key === 'leadDate' && <span className="text-[10px] text-blue-500">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                   </th>
+                )}
+
+                {/* OPEN TASKS (Both) */}
+                <th className="px-4 py-3 min-w-[120px] align-top">
+                   <div className="flex items-center gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('openTaskCount')}>
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tasks</span>
+                      {sort.key === 'openTaskCount' && <span className="text-[10px] text-blue-500">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+                   </div>
+                </th>
+
+                {/* SALES POTENTIAL (Clients Only) */}
+                {!isVendor && (
+                   <th className="px-4 py-3 min-w-[120px] align-top text-right">
+                      <div className="flex items-center justify-end gap-1 cursor-pointer hover:text-blue-600 group" onClick={() => handleSort('salesPotential')}>
+                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Potential</span>
+                        {sort.key === 'salesPotential' && <span className="text-[10px] text-blue-500">{sort.dir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                   </th>
+                )}
+                
+                <th className="px-4 py-3 align-top w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -212,24 +310,48 @@ export default function CompanyMaster({ type }) {
                     </div>
                     {item.companyName}
                   </td>
+
+                  {!isVendor && (
+                    <td className="px-4 py-3">
+                        <Badge color={['Active','Hot Lead'].includes(item.status)?'green':['Blacklisted','Churned'].includes(item.status)?'red':'blue'}>{item.status}</Badge>
+                    </td>
+                  )}
+
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {item.derivedFormats.slice(0, 2).map(f => <span key={f} className="px-1.5 py-0.5 bg-slate-100 border rounded text-[10px] text-slate-600">{f}</span>)}
+                      {item.derivedFormats.length > 2 && <span className="text-[10px] text-slate-400">+{item.derivedFormats.length - 2}</span>}
+                    </div>
+                  </td>
+
                   {!isVendor && (
                     <>
-                      <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                      <td className="px-4 py-3 text-slate-600">{item.leadSource}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {(item.productFormats || []).slice(0, 2).map(f => <span key={f} className="px-1.5 py-0.5 bg-slate-100 border rounded text-[10px] text-slate-600">{f}</span>)}
-                          {(item.productFormats || []).length > 2 && <span className="text-[10px] text-slate-400">+{item.productFormats.length - 2}</span>}
-                        </div>
-                      </td>
+                        <td className="px-4 py-3">
+                            <div className="flex flex-wrap gap-1">
+                                {item.derivedProductList.slice(0, 2).map(p => <span key={p} className="px-1.5 py-0.5 bg-blue-50 border border-blue-100 rounded text-[10px] text-blue-700">{p}</span>)}
+                                {item.derivedProductList.length > 2 && <span className="text-[10px] text-slate-400">+{item.derivedProductList.length - 2}</span>}
+                            </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{item.leadSource}</td>
+                        <td className="px-4 py-3 text-slate-500 font-mono text-xs">{formatDate(item.leadDate)}</td>
                     </>
                   )}
-                  <td className="px-4 py-3 text-slate-600">{item.country || '-'}</td>
+
+                  <td className="px-4 py-3">
+                     {item.openTaskCount > 0 ? (
+                        <div className="flex items-center gap-2">
+                            <Badge color="red" size="xs">{item.openTaskCount}</Badge>
+                            {item.nextTask && <span className="text-[10px] text-slate-400 truncate max-w-[80px]" title={item.nextTask.title}>{item.nextTask.title}</span>}
+                        </div>
+                     ) : <span className="text-slate-300 text-xs">-</span>}
+                  </td>
+
+                  {!isVendor && (
+                      <td className="px-4 py-3 text-right font-medium text-slate-700">{formatMoney(item.salesPotential)}</td>
+                  )}
+
                   <td className="px-4 py-3 text-right">
-                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {item.website && <a href={item.website} target="_blank" onClick={(e) => e.stopPropagation()} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Globe className="w-4 h-4"/></a>}
-                        <button onClick={(e) => { e.stopPropagation(); setFormData(item); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1 rounded"><MoreVertical className="w-4 h-4" /></button>
-                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); setFormData(item); setIsModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1 opacity-0 group-hover:opacity-100"><MoreVertical className="w-4 h-4" /></button>
                   </td>
                 </tr>
               ))}
@@ -238,7 +360,7 @@ export default function CompanyMaster({ type }) {
         </div>
       </div>
 
-      {/* DETAIL PANEL OVERLAY */}
+      {/* DETAIL PANEL */}
       {detailView.open && <DetailPanel type={type} data={detailView.data} onClose={() => setDetailView({ open: false, data: null })} />}
 
       {/* CREATE / EDIT MODAL */}
@@ -261,12 +383,12 @@ export default function CompanyMaster({ type }) {
                     <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Lead Details</h4>
                     <div className="grid grid-cols-2 gap-4 mb-4">
                         <select className="p-2 border rounded w-full" value={formData.status||''} onChange={e=>setFormData({...formData, status:e.target.value})}>
-                            <option value="">Status...</option>
-                            {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                            <option value="">Select Status...</option>
+                            {(settings.leadStatuses || []).map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                         <select className="p-2 border rounded w-full" value={formData.leadSource||''} onChange={e=>setFormData({...formData, leadSource:e.target.value})}>
-                            <option value="">Source...</option>
-                            {settings.leadSources.map(s => <option key={s} value={s}>{s}</option>)}
+                            <option value="">Select Source...</option>
+                            {(settings.leadSources || []).map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
                     </div>
                     <div>
@@ -278,7 +400,7 @@ export default function CompanyMaster({ type }) {
                   <div className="border-t pt-4">
                     <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Product Format Interest</h4>
                     <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border p-2 rounded">
-                        {settings.formats.map(fmt => (
+                        {(settings.formats || []).map(fmt => (
                             <label key={fmt} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 p-1 rounded">
                                 <input 
                                     type="checkbox" 
